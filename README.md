@@ -54,15 +54,41 @@ pipx install -e .
 ```
 sectape rec [label]        record a session; exit the shell to finish
 sectape attach             record another tab or tmux pane into the same session
+sectape note <text>        annotate the running session
 sectape stop               export now and end the session
 sectape list               what has been recorded
 sectape show [session]     print a transcript to stdout
-sectape export [session]   write it to a file  (-f markdown|json|text, -o PATH)
+sectape export [session]   write it to a file
 sectape status             what is recording right now
 sectape rm <session>       delete raw logs
 sectape config init        write a config file you can edit
+sectape completion zsh     emit a completion script
 sectape doctor             check the install
 ```
+
+`export` and `show` take `-f markdown|json|text|html`, `-o PATH`, and filters:
+`--only-failed`, `--last N`, `--grep RE`, `--no-output`.
+
+## Notes while you work
+
+A transcript tells you what you ran. It does not tell you *why*. From inside a
+recording:
+
+```console
+$ sectape note "load is climbing - checking the worker pool"
+noted load is climbing - checking the worker pool
+```
+
+Notes are timestamped and land between the right commands in the export:
+
+```markdown
+> **note** · 19:18:47
+> load climbing — checking the worker pool
+
+### 2. `grep -c . /etc/hosts`
+```
+
+`sectape note` is itself left out of the transcript.
 
 Handy aliases:
 
@@ -89,6 +115,12 @@ Sessions recorded without integration (`--no-integration`, a shell other than
 zsh/bash, an ssh session inside the recording) fall back to reading commands
 off the rendered screen, and the export says so.
 
+zsh uses `preexec`/`precmd`. bash has no preexec hook, so it rides the `DEBUG`
+trap and reads the typed line from `history 1` — `BASH_COMMAND` alone holds
+only the current *simple* command, which would record `a; b` and loops as their
+first clause. If you have disabled bash history, command text falls back to
+`BASH_COMMAND` and compound lines are truncated.
+
 ### Things it gets right that a naive `script` wrapper doesn't
 
 - The recorded shell inherits your real window size and follows `SIGWINCH`, so
@@ -112,6 +144,7 @@ Three formats, selected with `-f` or `output.format` in the config:
 | `markdown` | A readable document. Content between `<!-- sectape:begin -->` and `<!-- sectape:end -->` is regenerated; anything you write outside it is preserved. |
 | `json` | Structured steps — command, output, exit code, cwd, duration — for feeding somewhere else. |
 | `text` | Plain prompt-and-output, good for piping. |
+| `html` | A self-contained page — no external assets, readable in light or dark, fine to hand to someone. |
 
 ## Configuration
 
@@ -123,6 +156,11 @@ state_dir = "~/.sectape"
 prompt = "$"
 redact = true
 shell_integration = true
+
+[redaction]
+# On top of the built-in patterns. Whatever these match is replaced wholesale.
+patterns = ["CORP-[0-9]{6}", "internal\\.example\\.com"]
+replacement = "<REDACTED>"
 
 [output]
 dir = "~/sectape"
@@ -145,7 +183,9 @@ care as your shell history — more, since they include command *output*.
 - Anything you `cat`, `echo` or paste **is**.
 - `redact = true` (the default) strips high-confidence secrets — private key
   blocks, `Authorization:` headers, AWS/GitHub/Slack/OpenAI-shaped tokens —
-  from **exports**. It does not rewrite the raw logs.
+  from **exports**. It does not rewrite the raw logs. Add your own patterns
+  under `[redaction]`.
+- The state directory is created `0700` and pane logs `0600`.
 - `sectape rm <session> --yes` deletes a recording's raw logs.
 
 ## Tests
@@ -154,11 +194,11 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-149 tests, no dependencies. The end-to-end ones drive the real CLI through a
+214 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
-exact commands and exit codes. CI runs them on macOS and Linux across Python
-3.11–3.13.
+exact commands and exit codes, under both zsh and bash. CI runs them on macOS
+and Linux across Python 3.11–3.13.
 
 ## Licence
 

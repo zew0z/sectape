@@ -19,7 +19,7 @@ from pathlib import Path
 
 CONFIG_ENV = "SECTAPE_CONFIG"
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "sectape" / "config.toml"
-FORMATS = ("markdown", "json", "text")
+FORMATS = ("markdown", "json", "text", "html")
 
 
 class ConfigError(Exception):
@@ -46,6 +46,8 @@ class Settings:
     format: str = "markdown"
 
     redact: bool = True
+    redact_patterns: tuple[str, ...] = ()
+    redact_replacement: str = "<REDACTED>"
     shell_integration: bool = True
     prompt: str = "$"                   # shown before each command in exports
     max_output_lines: int = 300
@@ -84,7 +86,13 @@ def _from_file(path: Path) -> dict:
 
     general = raw.get("general", {})
     output = raw.get("output", {})
+    redaction = raw.get("redaction", {})
     values: dict = {}
+
+    if "patterns" in redaction:
+        values["redact_patterns"] = tuple(str(x) for x in redaction["patterns"])
+    if "replacement" in redaction:
+        values["redact_replacement"] = str(redaction["replacement"])
 
     if "state_dir" in general:
         values["state_dir"] = _expand(general["state_dir"])
@@ -127,6 +135,12 @@ def config_path() -> Path:
 
 
 def validate(s: Settings) -> Settings:
+    import re
+    for pattern in s.redact_patterns:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ConfigError(f"bad redaction pattern {pattern!r}: {exc}") from None
     if s.format not in FORMATS:
         raise ConfigError(f"unknown output format {s.format!r}; "
                           f"choose one of {', '.join(FORMATS)}")
@@ -159,9 +173,15 @@ def override(**values) -> Settings:
 
 
 def ensure_dirs() -> None:
-    for directory in (settings.state_dir, settings.sessions_dir,
-                      settings.backup_dir, settings.output_dir):
-        directory.mkdir(parents=True, exist_ok=True)
+    # The state tree holds raw terminal logs, so keep it owner-only. The output
+    # directory is for documents you will share, and is left to your umask.
+    for directory in (settings.state_dir, settings.sessions_dir, settings.backup_dir):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            directory.chmod(0o700)
+        except OSError:
+            pass
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
 
 
 TEMPLATE = '''\
@@ -182,9 +202,16 @@ redact = true
 # Turn off to fall back to reading commands off the screen.
 shell_integration = true
 
+[redaction]
+# Extra regular expressions to scrub from exports, on top of the built-in
+# private-key / bearer-token / cloud-credential patterns. Anything a pattern
+# matches is replaced wholesale.
+patterns = []
+replacement = "<REDACTED>"
+
 [output]
 dir = "~/sectape"
-# markdown | json | text
+# markdown | json | text | html
 format = "markdown"
 max_output_lines = 300
 max_output_chars = 20000

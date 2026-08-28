@@ -1,5 +1,54 @@
 # Changelog
 
+## 4.1.0
+
+### Fixed
+
+- **Short writes truncated output.** `os.write` on a tty or pipe may accept
+  fewer bytes than it is given — a large paste, or output arriving faster than
+  the terminal drains it. Mirroring and logging both used a bare `os.write`,
+  so in exactly those cases bytes were dropped from the log, the child's input,
+  or the screen. All four call sites now loop until the buffer is empty.
+- **A temporary directory leaked per recording.** The shell-integration wrapper
+  was built in the forked child, which had no opportunity to remove it; the
+  parent now owns it and cleans up when the session ends.
+- **Pane logs were world-readable.** The state tree is created `0700` and pane
+  logs `0600`. They contain everything the terminal displayed.
+- **Multi-pane sessions were not chronological.** Reading pane logs end to end
+  put every command from the first pane before the second's. Steps carrying a
+  marker timestamp are now merged by time.
+- **`list` and `status` over-counted.** They counted every marker, including
+  the `exit`/`clear`/`sectape` lines the exporter drops, so the numbers
+  disagreed with the export.
+- **bash recorded its own setup.** The `DEBUG` trap was installed before
+  `PROMPT_COMMAND` was assigned, so the trap captured that assignment as the
+  session's first command.
+- **bash truncated compound commands.** `BASH_COMMAND` holds only the current
+  simple command, so `a; b` and loops were recorded as their first clause. The
+  typed line now comes from `history 1`.
+- **`export`/`show` crashed** on a session record with no `dir` key.
+- **Output truncation silently did nothing** when the line limit was under 20,
+  because the head slice went negative.
+- `rm` now says which recording a fuzzy name matched before deleting it.
+
+### Added
+
+- `sectape note <text>` — timestamped annotations, written from inside the
+  recording and interleaved into exports between the right commands. Reads
+  stdin when piped. Left out of the transcript itself.
+- `html` export format: a self-contained page, no external assets, readable in
+  light or dark.
+- Filters on `export` and `show`: `--only-failed`, `--last N`, `--grep RE`,
+  `--no-output`.
+- Custom redaction patterns via `[redaction]` in the config file.
+- `sectape completion zsh|bash`.
+- Commands are attributed to their pane when a session recorded more than one.
+
+### Tests
+
+214 tests, up from 149. bash is now covered end to end — that path had never
+been executed before this release.
+
 ## 4.0.0
 
 First public release.

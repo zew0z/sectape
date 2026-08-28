@@ -80,10 +80,27 @@ BASH_HOOKS = r"""
 if [ -n "$SECTAPE_ACTIVE" ] && [ -z "$SECTAPE_INTEGRATION_LOADED" ]; then
   SECTAPE_INTEGRATION_LOADED=1
   _sectape_b64() {{ printf '%s' "$1" | base64 | tr -d '\n'; }}
+  # bash has no preexec hook, so this rides the DEBUG trap. BASH_COMMAND holds
+  # only the current simple command, so `a; b` and loops would be recorded as
+  # their first clause; the history entry has the line as it was typed.
+  _sectape_line() {{
+    local entry
+    entry=$(HISTTIMEFORMAT= history 1 2>/dev/null)
+    if [[ $entry =~ ^[[:space:]]*[0-9]+[[:space:]]+(.*)$ ]]; then
+      printf '%s' "${{BASH_REMATCH[1]}}"
+    else
+      printf '%s' "$BASH_COMMAND"
+    fi
+  }}
   _sectape_preexec() {{
     [ -n "$_SECTAPE_RUNNING" ] && return
+    # The trap also fires for the prompt hook itself; that is not a command
+    # the user ran.
+    case "$BASH_COMMAND" in
+      _sectape_precmd*|_sectape_preexec*|"$PROMPT_COMMAND") return ;;
+    esac
     _SECTAPE_RUNNING=1
-    printf '\033]7337;SECTAPE;b|%s|%s\007' "$(_sectape_b64 "$BASH_COMMAND")" "$(date +%s.%N)"
+    printf '\033]7337;SECTAPE;b|%s|%s\007' "$(_sectape_b64 "$(_sectape_line)")" "$(date +%s.%N)"
   }}
   _sectape_precmd() {{
     local ec=$?
@@ -91,8 +108,10 @@ if [ -n "$SECTAPE_ACTIVE" ] && [ -z "$SECTAPE_INTEGRATION_LOADED" ]; then
     unset _SECTAPE_RUNNING
     printf '\033]7337;SECTAPE;e|%s|%s|%s\007' "$ec" "$(date +%s.%N)" "$(_sectape_b64 "$PWD")"
   }}
-  trap '_sectape_preexec' DEBUG
+  # PROMPT_COMMAND first: installing the trap before this line made the trap
+  # capture the assignment itself as the session's first command.
   PROMPT_COMMAND="_sectape_precmd${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}"
+  trap '_sectape_preexec' DEBUG
 fi
 # --- end sectape ------------------------------------------------------
 """

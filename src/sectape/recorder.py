@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import os
 import select
+import shutil
 import signal
 import sys
 import tempfile
@@ -20,24 +21,60 @@ from .markers import build_bash_wrapper, build_zsh_wrapper
 from .terminal import TERMINAL_RESET, get_winsize, set_winsize
 
 
-def _spawn_shell(no_integration: bool) -> None:
-    """Runs in the forked child. Never returns."""
+def write_all(fd: int, data: bytes) -> None:
+    """Write every byte.
+
+    os.write on a tty or pipe may accept fewer bytes than it was given - a
+    large paste, or output arriving faster than the terminal drains it. A bare
+    os.write silently truncates in exactly those cases.
+    """
+    view = memoryview(data)
+    while view:
+        try:
+            written = os.write(fd, view)
+        except InterruptedError:
+            continue
+        except BlockingIOError:
+            select.select([], [fd], [], 0.1)
+            continue
+        if written <= 0:
+            break
+        view = view[written:]
+
+
+def prepare_shell(no_integration: bool) -> tuple[str, str, Path | None]:
+    """Pick the shell and build its integration wrapper.
+
+    Called before the fork so the parent owns the temporary directory and can
+    remove it when the session ends; building it in the child leaked one
+    directory per recording.
+    """
     shell = os.environ.get("SECTAPE_SHELL") or os.environ.get("SHELL") or "/bin/zsh"
     name = os.path.basename(shell)
+    if no_integration or name not in ("zsh", "bash"):
+        return shell, name, None
+
+    wrapper = Path(tempfile.mkdtemp(prefix="sectape-shell-"))
+    os.chmod(wrapper, 0o700)
+    if name == "zsh":
+        build_zsh_wrapper(wrapper)
+    else:
+        build_bash_wrapper(wrapper / "bashrc")
+    return shell, name, wrapper
+
+
+def _spawn_shell(shell: str, name: str, wrapper: Path | None) -> None:
+    """Runs in the forked child. Never returns."""
     os.environ["SECTAPE_ACTIVE"] = "1"
     os.environ.pop("SECTAPE_INTEGRATION_LOADED", None)
 
     try:
-        if not no_integration and name == "zsh":
-            wrap = Path(tempfile.mkdtemp(prefix="sectape-zdotdir-"))
-            build_zsh_wrapper(wrap)
+        if wrapper is not None and name == "zsh":
             os.environ["SECTAPE_REAL_ZDOTDIR"] = os.environ.get("ZDOTDIR") or str(Path.home())
-            os.environ["ZDOTDIR"] = str(wrap)
+            os.environ["ZDOTDIR"] = str(wrapper)
             os.execvp(shell, [shell, "-i"])
-        elif not no_integration and name == "bash":
-            rc = Path(tempfile.mkdtemp(prefix="sectape-bashrc-")) / "bashrc"
-            build_bash_wrapper(rc)
-            os.execvp(shell, [shell, "--rcfile", str(rc), "-i"])
+        elif wrapper is not None and name == "bash":
+            os.execvp(shell, [shell, "--rcfile", str(wrapper / "bashrc"), "-i"])
         else:
             os.execvp(shell, [shell, "-i"])
     except Exception:
@@ -65,23 +102,24 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
     print(banner, flush=True)
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = open(log_path, "ab", buffering=0)
+    # 0o600: the log holds everything the terminal displayed.
+    log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+
+    shell, shell_name, wrapper = prepare_shell(no_integration)
 
     pid, master_fd = pty.fork()
     if pid == 0:
-        _spawn_shell(no_integration)
+        _spawn_shell(shell, shell_name, wrapper)
         os._exit(127)                                   # unreachable
 
     rows, cols, _, _ = get_winsize(stdin_fd)
     set_winsize(master_fd, rows, cols)
 
-    log_fd = log_file.fileno()
-
     def note_size(rows: int, cols: int) -> None:
         # Written straight to the log so the replay knows the wrap column;
         # it never reaches the user's terminal.
         try:
-            os.write(log_fd, f"\x1b]7337;SECTAPE;w|{cols}|{rows}\x07".encode())
+            write_all(log_fd, f"\x1b]7337;SECTAPE;w|{cols}|{rows}\x07".encode())
         except OSError:
             pass
 
@@ -132,7 +170,7 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
                     data = b""
                 if data:
                     try:
-                        os.write(master_fd, data)
+                        write_all(master_fd, data)
                     except OSError:
                         running = False
                 else:
@@ -149,10 +187,10 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
                 if not data:
                     running = False
                 else:
-                    os.write(sys.stdout.fileno(), data)
+                    write_all(sys.stdout.fileno(), data)
                     try:
-                        log_file.write(data)
-                    except Exception:
+                        write_all(log_fd, data)
+                    except OSError:
                         pass
     finally:
         signal.signal(signal.SIGWINCH, prev_winch)
@@ -166,14 +204,16 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
                 chunk = os.read(master_fd, 65536)
                 if not chunk:
                     break
-                os.write(sys.stdout.fileno(), chunk)
-                log_file.write(chunk)
+                write_all(sys.stdout.fileno(), chunk)
+                write_all(log_fd, chunk)
         except Exception:
             pass
         try:
-            log_file.close()
-        except Exception:
+            os.close(log_fd)
+        except OSError:
             pass
+        if wrapper is not None:
+            shutil.rmtree(wrapper, ignore_errors=True)
         try:
             os.close(master_fd)
         except OSError:

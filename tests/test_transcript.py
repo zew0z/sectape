@@ -153,6 +153,36 @@ class TestCollecting(TempConfig):
         self.assertEqual(collect_steps(d), ([], 0))
 
 
+class TestChronologicalMerge(TempConfig):
+    def test_panes_interleave_by_timestamp(self):
+        # Reading pane logs end to end put all of pane 1 before pane 2.
+        import time as _t
+        d = self.sessions / "multi"
+        d.mkdir(parents=True)
+        (d / "pane_1.raw").write_text(begin("first", 10.0) + "a\r\n" + end(0, 10.5)
+                                      + begin("third", 30.0) + "c\r\n" + end(0, 30.5))
+        _t.sleep(0.02)
+        (d / "pane_2.raw").write_text(begin("second", 20.0) + "b\r\n" + end(0, 20.5))
+        steps, _ = collect_steps(d)
+        self.assertEqual([s.cmd for s in steps], ["first", "second", "third"])
+
+    def test_output_stays_with_its_command(self):
+        d = self.sessions / "multi2"
+        d.mkdir(parents=True)
+        (d / "pane_1.raw").write_text(begin("one", 10.0) + "OUT-ONE\r\n" + end(0, 10.5))
+        (d / "pane_2.raw").write_text(begin("two", 5.0) + "OUT-TWO\r\n" + end(0, 5.5))
+        steps, _ = collect_steps(d)
+        by_cmd = {s.cmd: s.output for s in steps}
+        self.assertEqual(by_cmd["one"], "OUT-ONE")
+        self.assertEqual(by_cmd["two"], "OUT-TWO")
+        self.assertEqual([s.cmd for s in steps], ["two", "one"])
+
+    def test_unmarked_transcripts_keep_their_order(self):
+        d = self.make_session("plain", "user ❯ alpha\r\nx\r\nuser ❯ beta\r\ny\r\n")
+        steps, _ = collect_steps(d)
+        self.assertEqual([s.cmd for s in steps], ["alpha", "beta"])
+
+
 class TestCounting(TempConfig):
     def test_counts_markers_without_rendering(self):
         d = self.make_session("c1", begin("a") + "x\r\n" + end(0) + begin("b") + "y\r\n" + end(0))
@@ -168,6 +198,16 @@ class TestCounting(TempConfig):
         d.mkdir(parents=True)
         (d / "pane_1.raw").write_bytes(b"x" * (MAX_SCAN_BYTES + 1))
         self.assertIsNone(count_commands(d))
+
+    def test_ignored_commands_are_not_counted(self):
+        # `list` used to report every marker, so it disagreed with the export.
+        d = self.make_session("noise", begin("ls") + "a\r\n" + end(0)
+                              + begin("clear") + end(0)
+                              + begin("exit") + end(0)
+                              + begin("sectape stop") + end(0))
+        steps, _ = collect_steps(d)
+        self.assertEqual(count_commands(d), len(steps))
+        self.assertEqual(count_commands(d), 1)
 
     def test_agrees_with_full_parse(self):
         d = self.make_session("c3", begin("a") + "x\r\n" + end(0)

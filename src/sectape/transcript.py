@@ -48,6 +48,7 @@ class Step:
     started: float | None = None
     duration: float | None = None
     source: str = "heuristic"          # "marker" | "heuristic"
+    pane: str = ""                     # which pane log it came from
 
     @property
     def failed(self) -> bool:
@@ -210,28 +211,58 @@ def count_commands(session_dir: Path) -> int | None:
         raw = read_raw_log(pf)
         if not raw:
             continue
-        marked = sum(1 for m in MARKER_RE.finditer(raw) if m.group(1).startswith("b|"))
-        if marked:
-            total += marked
-        else:
-            total += len(parse_heuristic_transcript(raw))
+        # Count the commands that would actually be exported: marker payloads
+        # minus the shell/recorder noise the parser drops.
+        marked = 0
+        found_marker = False
+        for m in MARKER_RE.finditer(raw):
+            payload = m.group(1)
+            if not payload.startswith("b|"):
+                continue
+            found_marker = True
+            parts = payload.split("|")
+            if len(parts) > 1 and not _is_ignored(_b64d(parts[1])):
+                marked += 1
+        total += marked if found_marker else len(parse_heuristic_transcript(raw))
     return total
+
+
+def sort_by_time(steps: list[Step]) -> list[Step]:
+    """Interleave panes chronologically.
+
+    Reading pane logs one after another put every command from pane 1 before
+    pane 2's, which is wrong whenever you work in two tabs at once. Steps that
+    carry a marker timestamp are ordered by it; unmarked ones keep their
+    position relative to their neighbours.
+    """
+    if not any(s.started for s in steps):
+        return steps
+    decorated = []
+    last_seen = 0.0
+    for index, step in enumerate(steps):
+        if step.started:
+            last_seen = step.started
+        decorated.append((last_seen, index, step))
+    decorated.sort(key=lambda item: (item[0], item[1]))
+    return [step for _, _, step in decorated]
 
 
 def collect_steps(session_dir: Path, do_redact: bool = True) -> tuple[list[Step], int]:
     """Read every pane log for a session, oldest first, and extract the steps."""
-    raws: list[str] = []
+    raws: list[tuple[str, str]] = []
     if session_dir.exists():
         for pf in sorted(session_dir.glob("pane_*.raw"), key=lambda p: p.stat().st_mtime):
             raw = read_raw_log(pf)
             if raw:
-                raws.append(raw)
+                raws.append((pf.stem.replace("pane_", ""), raw))
 
     steps: list[Step] = []
-    for raw in raws:
-        steps.extend(parse_transcript(raw))
+    for pane_name, raw in raws:
+        for step in parse_transcript(raw):
+            step.pane = pane_name
+            steps.append(step)
 
-    steps = dedupe_steps(steps)
+    steps = sort_by_time(dedupe_steps(steps))
     if do_redact:
         for s in steps:
             s.cmd = redact(s.cmd)

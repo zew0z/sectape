@@ -228,3 +228,103 @@ class TestRecording(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(shutil.which("bash"), "bash not available")
+@unittest.skipIf(sys.platform == "win32", "POSIX only")
+class TestBashRecording(unittest.TestCase):
+    """bash uses a DEBUG trap and PROMPT_COMMAND rather than zsh's hooks, so it
+    needs its own coverage - the two paths share nothing but the marker format."""
+
+    ROWS, COLS = 40, 131
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="sectape-bash-"))
+        home = self.root / "home"
+        home.mkdir(parents=True)
+        (home / ".bashrc").write_text("PS1='bash$ '\n")
+        self.env = dict(os.environ)
+        self.env.update({
+            "SECTAPE_STATE_DIR": str(self.root / "state"),
+            "SECTAPE_OUTPUT_DIR": str(self.root / "out"),
+            "SECTAPE_CONFIG": str(self.root / "none.toml"),
+            "SECTAPE_SHELL": shutil.which("bash"),
+            "HOME": str(home),
+            "TERM": "xterm-256color",
+            "PYTHONUNBUFFERED": "1",
+        })
+        self.env.pop("ZDOTDIR", None)
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+
+    def session(self, lines, label="bash-e2e"):
+        import pty
+        pid, master = pty.fork()
+        if pid == 0:
+            try:
+                os.execve(sys.executable,
+                          [sys.executable, "-m", "sectape", "rec", label], self.env)
+            except Exception:
+                pass
+            os._exit(127)
+        set_winsize(master, self.ROWS, self.COLS)
+        sink = []
+        try:
+            read_until(master, "recording", 25, sink)
+            time.sleep(1.2)
+            for line in lines:
+                os.write(master, (line + "\n").encode())
+                time.sleep(0.6)
+            os.write(master, b"exit\n")
+            read_until(master, None, 25, sink)
+        finally:
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                done, _ = os.waitpid(pid, os.WNOHANG)
+                if done:
+                    break
+                time.sleep(0.1)
+            else:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        return "".join(sink)
+
+    def test_bash_inherits_the_terminal_size(self):
+        out = self.session(["echo COLS=$COLUMNS"])
+        self.assertIn(f"COLS={self.COLS}", out)
+
+    def test_bash_integration_captures_commands_and_exit_codes(self):
+        self.session(["echo bash-hello", "false"])
+        note = self.root / "out" / "bash-e2e.md"
+        self.assertTrue(note.exists(),
+                        sorted(p.name for p in (self.root / "out").iterdir()))
+        text = note.read_text()
+        self.assertIn("echo bash-hello", text)
+        self.assertIn("bash-hello", text)
+        self.assertIn("`false`", text)
+        self.assertIn("**exit 1**", text)
+
+    def test_bash_output_is_not_a_staircase(self):
+        self.session(["printf 'a\\nb\\nc\\n'"])
+        text = (self.root / "out" / "bash-e2e.md").read_text()
+        self.assertIn("\na\nb\nc\n", text)
+
+    def test_bash_does_not_record_its_own_setup(self):
+        # The DEBUG trap used to be installed before PROMPT_COMMAND was set, so
+        # the trap captured that assignment as the session's first command.
+        self.session(["echo real-command"])
+        text = (self.root / "out" / "bash-e2e.md").read_text()
+        self.assertNotIn("PROMPT_COMMAND", text)
+        self.assertNotIn("_sectape_precmd", text)
+        self.assertIn("### 1. `echo real-command`", text)
+
+    def test_bash_records_the_whole_typed_line(self):
+        # BASH_COMMAND is only the current simple command, so compound lines
+        # were truncated to their first clause.
+        self.session(["echo one; echo two", "for i in 1 2; do echo n$i; done"])
+        text = (self.root / "out" / "bash-e2e.md").read_text()
+        self.assertIn("### 1. `echo one; echo two`", text)
+        self.assertIn("### 2. `for i in 1 2; do echo n$i; done`", text)

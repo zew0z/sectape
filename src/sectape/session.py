@@ -6,6 +6,7 @@ read-modify-written under a file lock.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import re
 import time
@@ -111,3 +112,54 @@ def resolve_session_dir(name: str) -> Path | None:
     matches = [d for d in config.settings.sessions_dir.iterdir()
                if d.is_dir() and squash(d.name) == squash(name)]
     return matches[0] if matches else None
+
+
+# --------------------------------------------------------------------------
+# Annotations
+# --------------------------------------------------------------------------
+
+NOTES_FILE = "notes.jsonl"
+
+
+def add_note(text: str, session_dir: Path | None = None,
+             when: float | None = None) -> Path | None:
+    """Append a timestamped note to the session, for exports to interleave."""
+    text = str(text or "").strip()
+    if not text:
+        return None
+    if session_dir is None:
+        session = read_session()
+        if not session:
+            return None
+        session_dir = Path(session.get("dir") or
+                           (config.settings.sessions_dir / session.get("slug", "")))
+    session_dir.mkdir(parents=True, exist_ok=True)
+    path = session_dir / NOTES_FILE
+    record = {"at": when if when is not None else time.time(), "text": text}
+    with session_lock():
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return path
+
+
+def read_notes(session_dir: Path) -> list[dict]:
+    """Every note recorded for a session, oldest first."""
+    path = Path(session_dir) / NOTES_FILE
+    notes: list[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(record, dict) and record.get("text"):
+                    notes.append({"at": float(record.get("at") or 0.0),
+                                  "text": str(record["text"])})
+    except OSError:
+        return []
+    notes.sort(key=lambda n: n["at"])
+    return notes

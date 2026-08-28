@@ -121,6 +121,61 @@ class TestSubprocessSmoke(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("configuration error", r.stderr)
 
+    def test_note_without_session_fails(self):
+        r = run("note", "hello", env=self.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("No active session", r.stdout)
+
+    def test_note_appends_to_the_active_session(self):
+        import json as _json
+        state = self.root / "state" / "sessions" / "s"
+        state.mkdir(parents=True)
+        (self.root / "state" / "current.json").write_text(
+            _json.dumps({"label": "s", "slug": "s", "dir": str(state)}))
+        r = run("note", "remember", "this", env=self.env)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("noted", r.stdout)
+        self.assertIn("remember this", (state / "notes.jsonl").read_text())
+
+    def test_note_reads_stdin_when_piped(self):
+        import json as _json
+        state = self.root / "state" / "sessions" / "s2"
+        state.mkdir(parents=True)
+        (self.root / "state" / "current.json").write_text(
+            _json.dumps({"label": "s2", "slug": "s2", "dir": str(state)}))
+        r = run("note", env=self.env, input="from stdin\n")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("from stdin", (state / "notes.jsonl").read_text())
+
+    def test_completion_scripts_emitted(self):
+        for shell in ("zsh", "bash"):
+            r = run("completion", shell, env=self.env)
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("sectape", r.stdout)
+            self.assertGreater(len(r.stdout), 200)
+
+    def test_export_filters_reach_the_writer(self):
+        import base64 as _b64, json as _json
+        state = self.root / "state" / "sessions" / "f"
+        state.mkdir(parents=True)
+
+        def b(c, t):
+            return f"\x1b]7337;SECTAPE;b|{_b64.b64encode(c.encode()).decode()}|{t}\x07"
+
+        def e(code, t):
+            return (f"\x1b]7337;SECTAPE;e|{code}|{t}|"
+                    f"{_b64.b64encode(b'/x').decode()}\x07")
+
+        (state / "pane_1.raw").write_text(
+            b("good", 1.0) + "fine\r\n" + e(0, 1.1)
+            + b("bad", 2.0) + "broken\r\n" + e(1, 2.1))
+        out = self.root / "only-failed.json"
+        r = run("export", "f", "-f", "json", "-o", str(out), "--only-failed",
+                env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        payload = _json.loads(out.read_text())
+        self.assertEqual([s["cmd"] for s in payload["steps"]], ["bad"])
+
     def test_rm_requires_confirmation(self):
         session = self.root / "state" / "sessions" / "demo"
         session.mkdir(parents=True)

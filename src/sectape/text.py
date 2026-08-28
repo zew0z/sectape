@@ -82,10 +82,31 @@ REDACTIONS = [
 ]
 
 
+_CUSTOM_CACHE: dict[tuple[str, ...], list] = {}
+
+
+def custom_redactions() -> list:
+    """Compile (and cache) the user's own redaction patterns."""
+    key = tuple(config.settings.redact_patterns)
+    compiled = _CUSTOM_CACHE.get(key)
+    if compiled is None:
+        compiled = []
+        for pattern in key:
+            try:
+                compiled.append(re.compile(pattern))
+            except re.error:
+                continue          # validate() already reported it at load time
+        _CUSTOM_CACHE[key] = compiled
+    return compiled
+
+
 def redact(text: str, enabled: bool = True) -> str:
     if not enabled or not text:
         return text
     for pattern, replacement in REDACTIONS:
+        text = pattern.sub(replacement, text)
+    replacement = config.settings.redact_replacement
+    for pattern in custom_redactions():
         text = pattern.sub(replacement, text)
     return text
 

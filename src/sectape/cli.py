@@ -11,12 +11,12 @@ from pathlib import Path
 
 from . import __version__, config
 from .config import ConfigError
-from .formats import WRITERS, Recording, export, render
+from .formats import WRITERS, Recording, export, filter_steps, render
 from .markers import ZSH_HOOKS
 from .recorder import record_pty
-from .session import (clear_session_if_idle, new_pane_id, prune_dead_panes,
-                      read_session, register_pane, resolve_session_dir,
-                      unregister_pane)
+from .session import (add_note, clear_session_if_idle, new_pane_id,
+                      prune_dead_panes, read_notes, read_session,
+                      register_pane, resolve_session_dir, unregister_pane)
 from .terminal import current_size
 from .transcript import collect_steps, count_commands
 from .util import human_duration, pid_alive, slugify, write_json_atomic
@@ -53,6 +53,7 @@ def _load_recording(session_dir: Path, label: str, meta: dict | None = None) -> 
         started=meta.get("started"),
         shell=meta.get("shell", ""),
         host=meta.get("host", ""),
+        notes=read_notes(session_dir),
     )
 
 
@@ -198,12 +199,26 @@ def cmd_stop(args) -> int:
 # --------------------------------------------------------------------------
 
 def _resolve(name: str) -> Path | None:
-    if not name:
-        session = read_session()
-        if session:
-            return Path(session.get("dir"))
-        return None
-    return resolve_session_dir(name)
+    if name:
+        return resolve_session_dir(name)
+    session = read_session() or {}
+    location = session.get("dir")
+    if location:
+        return Path(location)
+    if session.get("slug"):
+        return config.settings.sessions_dir / session["slug"]
+    return None
+
+
+def _apply_filters(rec: Recording, args) -> Recording:
+    rec.steps = filter_steps(
+        rec.steps,
+        only_failed=getattr(args, "only_failed", False),
+        last=getattr(args, "last", None),
+        grep=getattr(args, "grep", "") or "",
+        drop_output=getattr(args, "no_output", False),
+    )
+    return rec
 
 
 def cmd_export(args) -> int:
@@ -214,7 +229,7 @@ def cmd_export(args) -> int:
         print(f"No recording found for {name or 'the active session'!r}.")
         return 1
     label = name or session_dir.name
-    rec = _load_recording(session_dir, label)
+    rec = _apply_filters(_load_recording(session_dir, label), args)
     dest = Path(args.output).expanduser() if args.output else None
     path = export(rec, args.format, dest)
     print(path)
@@ -228,9 +243,32 @@ def cmd_show(args) -> int:
     if session_dir is None or not session_dir.exists():
         print(f"No recording found for {name or 'the active session'!r}.")
         return 1
-    rec = _load_recording(session_dir, name or session_dir.name)
+    rec = _apply_filters(_load_recording(session_dir, name or session_dir.name), args)
     text, _ = render(rec, args.format or "text")
     sys.stdout.write(text)
+    return 0
+
+
+def cmd_note(args) -> int:
+    config.ensure_dirs()
+    text = " ".join(args.text).strip()
+    if not text and not sys.stdin.isatty():
+        text = sys.stdin.read().strip()
+    if not text:
+        print("Nothing to note. Pass some text, or pipe it in.")
+        return 1
+
+    session = read_session()
+    if not session:
+        print("No active session; start one with `sectape rec`.")
+        return 1
+    path = add_note(text)
+    if path is None:
+        print("Could not write the note.")
+        return 1
+    g, c, y, r, d, off = _colour(_use_colour())
+    first = text.split("\n")[0]
+    print(f"{g}noted{off} {first[:70]}{'…' if len(first) > 70 else ''}")
     return 0
 
 
@@ -313,10 +351,13 @@ def cmd_status(args) -> int:
 
 def cmd_rm(args) -> int:
     config.ensure_dirs()
-    session_dir = resolve_session_dir(" ".join(args.session).strip())
+    name = " ".join(args.session).strip()
+    session_dir = resolve_session_dir(name)
     if session_dir is None:
-        print("No such recording.")
+        print(f"No recording matches {name!r}.")
         return 1
+    if session_dir.name != name:
+        print(f"{name!r} matched recording {session_dir.name!r}.")
     active = read_session()
     if active and Path(active.get("dir", "")) == session_dir:
         print("That session is still active; run `sectape stop` first.")
@@ -354,6 +395,66 @@ def cmd_config(args) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(config.TEMPLATE, encoding="utf-8")
     print(f"Wrote {path}")
+    return 0
+
+
+ZSH_COMPLETION = """#compdef sectape
+# sectape zsh completion - install with:
+#   sectape completion zsh > "${fpath[1]}/_sectape"
+_sectape_sessions() {
+  local dir="${SECTAPE_STATE_DIR:-$HOME/.sectape}/sessions"
+  [[ -d $dir ]] && _values 'recording' ${(f)"$(ls -1 $dir 2>/dev/null)"}
+}
+_sectape() {
+  local -a commands
+  commands=(
+    'rec:record a session' 'attach:record another pane'
+    'stop:export and end the session' 'note:annotate the running session'
+    'export:write a recording to a file' 'show:print a recording'
+    'list:list recordings' 'status:show the active session'
+    'rm:delete a recording' 'config:inspect or create the config'
+    'doctor:check the install' 'completion:emit a completion script'
+  )
+  _arguments -C '1:command:->cmd' '*::arg:->args'
+  case $state in
+    cmd) _describe -t commands 'sectape command' commands ;;
+    args)
+      case $words[1] in
+        export|show|rm) _sectape_sessions ;;
+        *) _default ;;
+      esac ;;
+  esac
+}
+_sectape "$@"
+"""
+
+BASH_COMPLETION = """# sectape bash completion - install with:
+#   sectape completion bash > /etc/bash_completion.d/sectape
+_sectape() {
+  local cur prev commands dir
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  commands="rec attach stop note export show list status rm config doctor completion"
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+    return
+  fi
+  case "${COMP_WORDS[1]}" in
+    export|show|rm)
+      dir="${SECTAPE_STATE_DIR:-$HOME/.sectape}/sessions"
+      COMPREPLY=( $(compgen -W "$(ls -1 "$dir" 2>/dev/null)" -- "$cur") ) ;;
+    config)
+      COMPREPLY=( $(compgen -W "init show path" -- "$cur") ) ;;
+    *)
+      COMPREPLY=( $(compgen -f -- "$cur") ) ;;
+  esac
+}
+complete -F _sectape sectape
+"""
+
+
+def cmd_completion(args) -> int:
+    print(ZSH_COMPLETION if args.shell == "zsh" else BASH_COMPLETION, end="")
     return 0
 
 
@@ -405,6 +506,18 @@ def cmd_doctor(args) -> int:
 # parser
 # --------------------------------------------------------------------------
 
+def _add_filters(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("filters")
+    group.add_argument("--only-failed", action="store_true",
+                       help="keep only commands that exited non-zero")
+    group.add_argument("--last", type=int, metavar="N",
+                       help="keep only the last N commands")
+    group.add_argument("--grep", metavar="RE",
+                       help="keep commands whose text or output matches")
+    group.add_argument("--no-output", action="store_true",
+                       help="list the commands without their output")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="sectape",
@@ -437,12 +550,18 @@ def build_parser() -> argparse.ArgumentParser:
     exp.add_argument("session", nargs="*", help="session name (default: active)")
     exp.add_argument("-f", "--format", choices=sorted(WRITERS))
     exp.add_argument("-o", "--output", metavar="PATH", help="write here instead")
+    _add_filters(exp)
     exp.set_defaults(func=cmd_export)
 
     show = sub.add_parser("show", aliases=["cat"], help="print a recording to stdout")
     show.add_argument("session", nargs="*")
     show.add_argument("-f", "--format", choices=sorted(WRITERS))
+    _add_filters(show)
     show.set_defaults(func=cmd_show)
+
+    note = sub.add_parser("note", help="annotate the running session")
+    note.add_argument("text", nargs="*", help="the note (or pipe it on stdin)")
+    note.set_defaults(func=cmd_note)
 
     lst = sub.add_parser("list", aliases=["ls"], help="list recordings")
     lst.add_argument("--json", action="store_true")
@@ -461,6 +580,10 @@ def build_parser() -> argparse.ArgumentParser:
     cfg.add_argument("action", choices=["init", "show", "path"], nargs="?", default="show")
     cfg.add_argument("--force", action="store_true")
     cfg.set_defaults(func=cmd_config)
+
+    comp = sub.add_parser("completion", help="emit a shell completion script")
+    comp.add_argument("shell", choices=["zsh", "bash"])
+    comp.set_defaults(func=cmd_completion)
 
     sub.add_parser("doctor", help="check the install").set_defaults(func=cmd_doctor)
     return p
