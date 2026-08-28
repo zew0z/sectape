@@ -338,17 +338,27 @@ class TestUnusableSessionState(TempConfig):
                     "SECTAPE_OUTPUT_DIR": str(config.settings.output_dir),
                     "SECTAPE_CONFIG": str(self.root / "none.toml")}
 
-    def test_every_read_only_command_survives(self):
+    COMMANDS = (["status"], ["status", "--json"], ["list"], ["list", "--json"],
+                ["doctor"], ["config", "show"])
+
+    def assert_survives(self, command, payload):
+        config.settings.current_session_file.write_text(payload, encoding="utf-8")
+        result = run(*command, env=self.env)
+        self.assertNotIn("Traceback", result.stderr,
+                         f"{command} on {payload!r}:\n{result.stderr}")
+        self.assertIn(result.returncode, (0, 1),
+                      f"{command} on {payload!r} -> {result.returncode}")
+
+    def test_every_read_only_command_survives_a_damaged_state_file(self):
+        # The damage is all handled in one place, so the payloads and the
+        # commands are covered separately rather than as a cross product of
+        # forty-two subprocesses.
+        for command in self.COMMANDS:
+            self.assert_survives(command, "[1, 2, 3]")
+
+    def test_every_shape_of_damage_survives(self):
         for payload in self.PAYLOADS:
-            config.settings.current_session_file.write_text(payload,
-                                                            encoding="utf-8")
-            for command in (["status"], ["status", "--json"], ["list"],
-                            ["list", "--json"], ["doctor"], ["config", "show"]):
-                result = run(*command, env=self.env)
-                self.assertNotIn("Traceback", result.stderr,
-                                 f"{command} on {payload!r}:\n{result.stderr}")
-                self.assertIn(result.returncode, (0, 1),
-                              f"{command} on {payload!r} -> {result.returncode}")
+            self.assert_survives(["status"], payload)
 
     def test_stop_reports_no_session_rather_than_crashing(self):
         for payload in self.PAYLOADS:
