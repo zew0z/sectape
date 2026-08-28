@@ -104,6 +104,11 @@ Behaviour an existing setup may notice. Each is described in full below.
   others - and installing ours over it broke them for the length of every
   recording. `PROMPT_COMMAND`, set two lines earlier, was already being
   preserved; the trap now is too, and runs first.
+- **A partly reconstructed transcript did not say so.** The warning that
+  commands were read back off the screen appeared only when *every* step was,
+  so a session mixing an integrated pane with one recorded without integration
+  said nothing at all about the half that was less reliable. The notice now
+  appears whenever any of it was, and says how much.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.

@@ -215,7 +215,7 @@ def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
         return None
     path = export(rec, fmt)
     if not quiet:
-        marked = sum(1 for s in rec.steps if s.source == "marker")
+        reconstructed = len(rec.reconstructed)
         parts = [plural(len(rec.steps), "command")]
         if rec.failed:
             parts.append(u.red(f"{len(rec.failed)} failed"))
@@ -225,8 +225,9 @@ def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
             parts.append(plural(rec.panes, "pane"))
         if rec.wall_time:
             parts.append(human_duration(rec.wall_time))
-        if not marked:
-            parts.append(u.yellow("reconstructed"))
+        if reconstructed:
+            parts.append(u.yellow("reconstructed" if reconstructed == len(rec.steps)
+                                  else f"{reconstructed} reconstructed"))
         for line in u.deck("stop", label):
             print(line)
         print(u.counter(*parts))

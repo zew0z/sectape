@@ -115,6 +115,30 @@ class Recording:
             return max(0.0, self.finished - self.began)
         return 0.0
 
+    @property
+    def reconstructed(self) -> list[Step]:
+        """Steps read back off the screen rather than from the markers."""
+        return [s for s in self.steps if s.source == "heuristic"]
+
+    def reconstruction_notice(self) -> tuple[str, str]:
+        """Headline and detail for the part of this document read off a screen.
+
+        Returned as plain prose in two pieces, so each writer can emphasise
+        the headline in its own way rather than one of them printing the
+        other's markup.
+        """
+        count = len(self.reconstructed)
+        if count == len(self.steps):
+            return ("Reconstructed transcript.",
+                    "This session was recorded without shell integration, so "
+                    "commands were read back off the screen and may carry "
+                    "prompt-redraw artifacts.")
+        was = "it was" if count == 1 else "they were"
+        return ("Partly reconstructed.",
+                f"{plural(count, 'command')} came from a pane recorded without "
+                f"shell integration, so {was} read back off the screen and may "
+                "carry prompt-redraw artifacts.")
+
     def programs(self, include_trivial: bool = False) -> list[str]:
         """Distinct programs run, in first-use order."""
         seen: list[str] = []
@@ -218,10 +242,12 @@ def to_markdown(rec: Recording) -> str:
         out += ["> No commands were captured in this session.", "", GEN_END, ""]
         return "\n".join(out)
 
-    if rec.steps and all(s.source == "heuristic" for s in rec.steps):
-        out += ["> **Reconstructed transcript.** This session was recorded without "
-                "shell integration, so commands were read back off the screen and "
-                "may carry prompt-redraw artifacts.", ""]
+    # The warning used to appear only when *every* step was reconstructed, so a
+    # session mixing an integrated pane with one recorded without integration
+    # said nothing at all about the half that was read off the screen.
+    if rec.reconstructed:
+        headline, detail = rec.reconstruction_notice()
+        out += [f"> **{headline}** {detail}", ""]
 
     index = 0
     current_pane = None
@@ -473,9 +499,10 @@ def to_html(rec: Recording) -> str:
         body.append('<p class="empty">No commands were captured in this session.</p>')
         return _html_page(rec.label, body)
 
-    if rec.steps and all(s.source == "heuristic" for s in rec.steps):
-        body.append('<p class="empty">Recorded without shell integration - commands '
-                    'were read back off the screen and may carry redraw artifacts.</p>')
+    if rec.reconstructed:
+        headline, detail = rec.reconstruction_notice()
+        body.append(f'<p class="empty"><strong>{esc(headline)}</strong> '
+                    f'{esc(detail)}</p>')
 
     body.append('<ol class="tape">')
     index = 0

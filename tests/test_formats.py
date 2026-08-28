@@ -328,6 +328,122 @@ class TestExportPermissions(TempConfig):
             os.umask(previous)
 
 
+class TestTimelineOrdering(TempConfig):
+    """Steps and notes come out in one chronological sequence."""
+
+    def order(self, steps, notes):
+        recording = Recording(label="x", steps=list(steps), panes=1,
+                              notes=list(notes))
+        return [(kind, item.cmd if kind == "step" else item["text"])
+                for kind, item in recording.timeline()]
+
+    def step(self, name, when, duration=0.1):
+        return Step(cmd=name, started=when, duration=duration, source="marker")
+
+    def note(self, text, when):
+        return {"at": when, "text": text}
+
+    def setUp(self):
+        super().setUp()
+        self.two = [self.step("a", 100.0), self.step("b", 200.0)]
+
+    def test_a_note_before_everything(self):
+        self.assertEqual(self.order(self.two, [self.note("n", 50.0)]),
+                         [("note", "n"), ("step", "a"), ("step", "b")])
+
+    def test_a_note_between_two_commands(self):
+        self.assertEqual(self.order(self.two, [self.note("n", 150.0)]),
+                         [("step", "a"), ("note", "n"), ("step", "b")])
+
+    def test_a_note_after_everything(self):
+        self.assertEqual(self.order(self.two, [self.note("n", 300.0)]),
+                         [("step", "a"), ("step", "b"), ("note", "n")])
+
+    def test_a_note_written_while_a_long_command_ran(self):
+        # It belongs just after the command that was still running.
+        steps = [self.step("a", 100.0, 60.0), self.step("b", 200.0)]
+        self.assertEqual(self.order(steps, [self.note("n", 120.0)]),
+                         [("step", "a"), ("note", "n"), ("step", "b")])
+
+    def test_a_note_sharing_a_commands_timestamp_follows_it(self):
+        self.assertEqual(self.order(self.two, [self.note("n", 200.0)]),
+                         [("step", "a"), ("step", "b"), ("note", "n")])
+
+    def test_several_notes_in_one_gap_keep_their_order(self):
+        notes = [self.note("n1", 150.0), self.note("n2", 160.0)]
+        self.assertEqual(self.order(self.two, notes),
+                         [("step", "a"), ("note", "n1"), ("note", "n2"),
+                          ("step", "b")])
+
+    def test_notes_are_sorted_by_time_not_by_file_order(self):
+        notes = [self.note("later", 160.0), self.note("earlier", 150.0)]
+        self.assertEqual(self.order(self.two, notes),
+                         [("step", "a"), ("note", "earlier"), ("note", "later"),
+                          ("step", "b")])
+
+    def test_without_step_timestamps_notes_come_last(self):
+        # Nothing to interleave against, so the transcript keeps its order.
+        steps = [Step(cmd="a"), Step(cmd="b")]
+        self.assertEqual(self.order(steps, [self.note("n", 150.0)]),
+                         [("step", "a"), ("step", "b"), ("note", "n")])
+
+    def test_nothing_timestamped_at_all(self):
+        steps = [Step(cmd="a"), Step(cmd="b")]
+        self.assertEqual(self.order(steps, [self.note("n", 0.0)]),
+                         [("step", "a"), ("step", "b"), ("note", "n")])
+
+    def test_every_step_and_note_appears_exactly_once(self):
+        steps = [self.step(f"c{i}", 100.0 + i * 10) for i in range(6)]
+        notes = [self.note(f"n{i}", 105.0 + i * 10) for i in range(6)]
+        out = self.order(steps, notes)
+        self.assertEqual(len(out), 12)
+        self.assertEqual(sorted(name for _, name in out),
+                         sorted([s.cmd for s in steps] + [n["text"] for n in notes]))
+
+
+class TestReconstructionNotice(TempConfig):
+    """A reader must be told which parts came off the screen.
+
+    The notice used to appear only when *every* step was reconstructed, so a
+    session mixing an integrated pane with one recorded without integration
+    said nothing about the half that was less reliable.
+    """
+
+    MARKED = Step(cmd="echo a", started=1.0, source="marker")
+    SCRAPED = Step(cmd="echo b", source="heuristic")
+
+    def notice(self, *steps) -> str:
+        text = to_markdown(rec(*steps))
+        lines = [l for l in text.split("\n") if l.startswith("> **")]
+        return lines[0] if lines else ""
+
+    def test_a_fully_integrated_session_says_nothing(self):
+        self.assertEqual(self.notice(self.MARKED), "")
+
+    def test_a_fully_reconstructed_session_says_so(self):
+        self.assertIn("Reconstructed transcript", self.notice(self.SCRAPED))
+
+    def test_a_mixed_session_says_how_much(self):
+        notice = self.notice(self.MARKED, self.SCRAPED, self.SCRAPED)
+        self.assertIn("Partly reconstructed", notice)
+        self.assertIn("2 commands", notice)
+
+    def test_one_reconstructed_command_is_singular(self):
+        self.assertIn("1 command", self.notice(self.MARKED, self.SCRAPED))
+
+    def test_html_carries_the_same_notice(self):
+        page = to_html(rec(self.MARKED, self.SCRAPED))
+        self.assertIn("Partly reconstructed", page)
+        self.assertNotIn("**", page, "markdown emphasis leaked into the page")
+
+    def test_html_says_nothing_when_fully_integrated(self):
+        self.assertNotIn("econstructed", to_html(rec(self.MARKED)))
+
+    def test_the_reconstructed_list_is_just_the_scraped_steps(self):
+        recording = rec(self.MARKED, self.SCRAPED)
+        self.assertEqual([s.cmd for s in recording.reconstructed], ["echo b"])
+
+
 class TestTextHeader(TempConfig):
     def test_one_command_is_singular(self):
         self.assertIn("(1 command, 0 failed)", to_text(rec(OK_STEP)))
