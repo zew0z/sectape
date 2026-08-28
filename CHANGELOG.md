@@ -233,6 +233,9 @@ Behaviour an existing setup may notice. Each is described in full below.
   SIGHUP, which is what closing the terminal window sends, and SIGKILL, after
   which nothing is exported at the time and the pane log on disk has to be
   enough to get the work back.
+- The documented override precedence has tests: defaults < config file <
+  environment < `--state-dir` / `--output-dir` / `--no-redact`, including that
+  a `~` in either path flag is expanded.
 - `ui.py` has tests: no escape sequence may reach a pipe, `NO_COLOR` and
   `SECTAPE_COLOR` are honoured, and glyphs fall back to ASCII off a UTF-8
   terminal.

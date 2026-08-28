@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import re
 import shutil
 import time
@@ -485,6 +486,79 @@ class TestListShowsTheReadableName(TempConfig):
         self.assertEqual(len(rows), 3)
         self.assertEqual(len({display_width(r) for r in rows}), 1,
                          "rows with wide characters do not line up")
+
+
+class TestGlobalOverrides(TempConfig):
+    """`--state-dir` / `--output-dir` / `--no-redact` override file and env.
+
+    The documented precedence is defaults < file < environment < flags.
+    """
+
+    SECRET = "AKIAIOSFODNN7EXAMPLE"
+
+    def setUp(self):
+        super().setUp()
+        import base64
+        session = self.sessions / "demo"
+        session.mkdir(parents=True, exist_ok=True)
+        b64 = lambda t: base64.b64encode(t.encode()).decode()
+        (session / "pane_01.raw").write_text(
+            f"\x1b]7337;SECTAPE;b|{b64('echo ' + self.SECRET)}|1700000000\x07"
+            f"{self.SECRET}\r\n"
+            f"\x1b]7337;SECTAPE;e|0|1700000001|{b64('/tmp')}\x07",
+            encoding="utf-8")
+        self.env = {"SECTAPE_STATE_DIR": str(config.settings.state_dir),
+                    "SECTAPE_OUTPUT_DIR": str(config.settings.output_dir),
+                    "SECTAPE_CONFIG": str(self.root / "none.toml")}
+
+    def test_state_dir_flag_beats_the_environment(self):
+        elsewhere = self.root / "elsewhere"
+        seen = json.loads(run("--state-dir", str(elsewhere), "list", "--json",
+                              env=self.env).stdout)
+        self.assertEqual(seen, [], "the flag did not override the environment")
+        # ...and without the flag the environment's own session is there
+        seen = json.loads(run("list", "--json", env=self.env).stdout)
+        self.assertEqual([r["session"] for r in seen], ["demo"])
+
+    def test_output_dir_flag_redirects_the_export(self):
+        target = self.root / "somewhere-else"
+        result = run("--output-dir", str(target), "export", "demo", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(pathlib.Path(result.stdout.strip()).parent, target)
+        self.assertTrue((target / "demo.md").exists())
+
+    def test_no_redact_keeps_the_secret(self):
+        self.assertNotIn(self.SECRET, run("show", "demo", env=self.env).stdout)
+        self.assertIn(self.SECRET,
+                      run("--no-redact", "show", "demo", env=self.env).stdout)
+
+    def test_a_tilde_is_expanded_in_both_flags(self):
+        out = run("--state-dir", "~/sectape-flag-probe",
+                  "--output-dir", "~/sectape-flag-probe-out",
+                  "config", "show", env=self.env).stdout
+        home = str(pathlib.Path.home())
+        self.addCleanup(self._remove_probe_dirs)
+        self.assertIn(f"{home}/sectape-flag-probe", out)
+        self.assertNotIn("~/sectape-flag-probe", out)
+
+    def _remove_probe_dirs(self):
+        home = pathlib.Path.home()
+        for name in ("sectape-flag-probe", "sectape-flag-probe-out"):
+            target = home / name
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+
+    def test_a_flag_beats_a_config_file_too(self):
+        path = self.root / "conf.toml"
+        path.write_text(f'[output]\ndir = "{self.root / "from-file"}"\n',
+                        encoding="utf-8")
+        env = dict(self.env)
+        env.pop("SECTAPE_OUTPUT_DIR")
+        target = self.root / "from-flag"
+        out = run("--config", str(path), "--output-dir", str(target),
+                  "config", "show", env=env).stdout
+        self.assertIn(str(target), out)
+        self.assertNotIn(str(self.root / "from-file"), out)
 
 
 class TestColumnFitting(unittest.TestCase):
