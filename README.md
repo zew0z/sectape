@@ -43,6 +43,12 @@ pipx install sectape
 
 Requires Python 3.11+ on macOS or Linux. No dependencies.
 
+From a checkout:
+
+```bash
+pipx install -e .
+```
+
 ## Use
 
 ```
@@ -141,6 +147,18 @@ care as your shell history — more, since they include command *output*.
   blocks, `Authorization:` headers, AWS/GitHub/Slack/OpenAI-shaped tokens —
   from **exports**. It does not rewrite the raw logs.
 - `sectape rm <session> --yes` deletes a recording's raw logs.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -t . -v
+```
+
+149 tests, no dependencies. The end-to-end ones drive the real CLI through a
+pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
+follows a resize, restores the terminal on `SIGTERM`, and produces exports with
+exact commands and exit codes. CI runs them on macOS and Linux across Python
+3.11–3.13.
 
 ## Licence
 
