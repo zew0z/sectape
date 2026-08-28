@@ -444,6 +444,52 @@ class TestReconstructionNotice(TempConfig):
         self.assertEqual([s.cmd for s in recording.reconstructed], ["echo b"])
 
 
+class TestFormatsCarryTheSameFacts(TempConfig):
+    """The four writers describe one recording; they should not disagree."""
+
+    STEP = Step(cmd="nmap -sV host", output="3 ports open", exit_code=0,
+                cwd="/srv", started=1700000000.0, duration=42.5,
+                source="marker", pane="01")
+
+    def recording(self, **kw):
+        base = dict(label="demo", steps=[self.STEP], panes=2,
+                    started=1699999999.0, shell="/bin/zsh", host="workstation",
+                    notes=[{"at": 1700000050.0, "text": "a note"}])
+        base.update(kw)
+        return Recording(**base)
+
+    def test_markdown_names_the_machine(self):
+        # The HTML page and the JSON both carried the host; the default
+        # format did not, which matters when you record on several boxes.
+        self.assertIn("- **Host**: `workstation`",
+                      to_markdown(self.recording()))
+
+    def test_no_host_line_when_it_is_unknown(self):
+        self.assertNotIn("**Host**", to_markdown(self.recording(host="")))
+
+    def test_html_names_the_machine(self):
+        self.assertIn("workstation", to_html(self.recording()))
+
+    def test_json_names_the_machine(self):
+        self.assertEqual(json.loads(to_json(self.recording()))["host"],
+                         "workstation")
+
+    def test_json_carries_every_field_of_a_step(self):
+        step = json.loads(to_json(self.recording()))["steps"][0]
+        self.assertEqual(sorted(step),
+                         ["cmd", "cwd", "duration", "exit_code", "output",
+                          "pane", "source", "started"])
+
+    def test_the_readable_formats_all_carry_command_and_output(self):
+        recording = self.recording()
+        for name, writer in (("markdown", to_markdown), ("text", to_text),
+                             ("html", to_html), ("json", to_json)):
+            rendered = writer(recording)
+            self.assertIn("nmap -sV host", rendered, name)
+            self.assertIn("3 ports open", rendered, name)
+            self.assertIn("a note", rendered, name)
+
+
 class TestTextHeader(TempConfig):
     def test_one_command_is_singular(self):
         self.assertIn("(1 command, 0 failed)", to_text(rec(OK_STEP)))

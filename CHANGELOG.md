@@ -218,6 +218,10 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Added
 
+- The markdown export names the machine the session was recorded on. The HTML
+  page and the JSON both carried it and the default format did not, which
+  matters as soon as you record on more than one box.
+
 - The README described an `ssh` session inside a recording as falling back to
   reading commands off the screen. It does not: the fallback is chosen per
   pane log, and a log with markers never uses it, so the remote session is

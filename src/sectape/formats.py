@@ -223,6 +223,10 @@ def to_markdown(rec: Recording) -> str:
         facts.append(f"- **Elapsed**: {human_duration(rec.wall_time)}")
     if rec.busy_time:
         facts.append(f"- **Time in commands**: {human_duration(rec.busy_time)}")
+    # The machine matters when you record on more than one; the HTML page and
+    # the JSON both carried it and the default format did not.
+    if rec.host:
+        facts.append(f"- **Host**: `{rec.host}`")
     if rec.shell:
         facts.append(f"- **Shell**: `{rec.shell}`")
     if rec.notes:
