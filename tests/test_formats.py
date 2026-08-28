@@ -490,6 +490,40 @@ class TestFormatsCarryTheSameFacts(TempConfig):
             self.assertIn("a note", rendered, name)
 
 
+class TestAwkwardLabels(TempConfig):
+    """A label reaches a heading, a filename, YAML and a listing row."""
+
+    STEP = Step(cmd="echo hi", exit_code=0, started=1.0, source="marker")
+
+    def markdown(self, label):
+        return to_markdown(Recording(label=label, steps=[self.STEP], panes=1))
+
+    def test_a_label_with_a_newline_gives_one_heading(self):
+        # Otherwise the second line was orphaned as body text.
+        text = self.markdown("first line\nsecond line")
+        headings = [l for l in text.split("\n") if l.startswith("# ")]
+        self.assertEqual(headings, ["# first line second line"])
+
+    def test_the_frontmatter_stays_one_block(self):
+        for label in ("---\ntype: evil", 'he said "hi"', "a: b"):
+            text = self.markdown(label)
+            self.assertTrue(text.startswith("---\n"))
+            # opening delimiter, closing delimiter, then the document
+            self.assertGreaterEqual(len(text.split("---\n")), 3, label)
+
+    def test_the_label_is_json_quoted_in_the_frontmatter(self):
+        text = self.markdown('he said "hi"')
+        self.assertIn(r'label: "he said \"hi\""', text)
+
+    def test_an_empty_label_still_names_the_document(self):
+        self.assertIn("# session", self.markdown("   "))
+
+    def test_a_label_that_looks_like_a_heading_is_not_one(self):
+        headings = [l for l in self.markdown("# not a heading").split("\n")
+                    if l.startswith("# ")]
+        self.assertEqual(headings, ["# # not a heading"])
+
+
 class TestTextHeader(TempConfig):
     def test_one_command_is_singular(self):
         self.assertIn("(1 command, 0 failed)", to_text(rec(OK_STEP)))

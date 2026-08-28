@@ -28,6 +28,16 @@ def slugify(text: str) -> str:
     return f"session-{digest}"
 
 
+def one_line(text) -> str:
+    """Collapse any run of whitespace to a single space.
+
+    A label is a heading, a filename and a row in a listing, and none of those
+    survive a newline in the middle of them - `sectape rec "$(some-command)"`
+    is all it takes.
+    """
+    return " ".join(str(text or "").split())
+
+
 def safe_filename(text: str, fallback: str = "untitled") -> str:
     """A single path component safe to join onto a vault directory."""
     s = str(text or "").replace("\n", " ").strip()

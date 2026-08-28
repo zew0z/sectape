@@ -12,7 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sectape.util import (human_duration, load_json, pid_alive, plural,
+from sectape.util import (human_duration, load_json, one_line, pid_alive,
+                          plural,
                           safe_filename, short_path, slugify, squash,
                           write_json_atomic, write_text_atomic)
 
@@ -50,6 +51,26 @@ class TestSlugify(unittest.TestCase):
     def test_an_empty_label_is_named_plainly(self):
         for text in ("", "   ", None):
             self.assertEqual(slugify(text), "session")
+
+
+class TestOneLine(unittest.TestCase):
+    """A label is a heading, a filename and a row in a listing at once."""
+
+    def test_newlines_become_spaces(self):
+        self.assertEqual(one_line("first\nsecond"), "first second")
+
+    def test_tabs_and_runs_collapse(self):
+        self.assertEqual(one_line("a\tb   c"), "a b c")
+
+    def test_surrounding_space_is_dropped(self):
+        self.assertEqual(one_line("  spaced  "), "spaced")
+
+    def test_empty_and_none(self):
+        for value in ("", "   ", "\n\t", None):
+            self.assertEqual(one_line(value), "")
+
+    def test_ordinary_text_is_untouched(self):
+        self.assertEqual(one_line("cert renewal"), "cert renewal")
 
 
 class TestSafeFilename(unittest.TestCase):

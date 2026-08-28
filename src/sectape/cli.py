@@ -23,8 +23,9 @@ from .session import (add_note, allocate_pane, clear_session_if_idle,
 from .terminal import current_size
 from .text import redact, trim_for_export
 from .transcript import collect_steps, count_commands
-from .util import (human_duration, pid_alive, plural, safe_filename,
-                   short_path, slugify, write_json_atomic)
+from .util import (human_duration, one_line, pid_alive, plural,
+                   safe_filename, short_path, slugify,
+                   write_json_atomic)
 
 from .ui import Style, fit, style_for
 
@@ -97,7 +98,7 @@ def cmd_rec(args) -> int:
               f"or {u.bold('exit')} first.")
         return 1
 
-    label = " ".join(args.label).strip() if args.label else _default_label()
+    label = one_line(" ".join(args.label)) if args.label else _default_label()
     slug = slugify(label)
     session_dir = ensure_session_dir(config.settings.sessions_dir / slug)
 
@@ -303,7 +304,7 @@ def session_name(session_dir: Path) -> str:
     The directory is a slug, and for a label with no ASCII in it that slug is
     a digest - unreadable on its own. The recording knows its own name.
     """
-    return read_session_meta(session_dir).get("label") or session_dir.name
+    return one_line(read_session_meta(session_dir).get("label")) or session_dir.name
 
 
 def sessions_ordered() -> list[Path]:

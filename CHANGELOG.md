@@ -115,6 +115,11 @@ Behaviour an existing setup may notice. Each is described in full below.
   `shell_integration = false` in the config or the environment. You were
   promised exact command capture and handed a transcript read off the screen.
   The banner and `doctor` now ask the same question the recorder does.
+- **A label containing a newline broke the document it named.** A label is a
+  markdown heading, a filename and a row in `list` all at once, and none of
+  those survive a line break in the middle - `sectape rec "$(some-command)"`
+  is all it takes. Labels are collapsed to a single line. The YAML frontmatter
+  was already quoted correctly and is unchanged.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.
