@@ -8,18 +8,21 @@ what each one printed, what it exited with, and how long it took.*
 
 ```console
 $ sectape rec "cert renewal"
-● sectape 4.0.0 recording  pane #48213
-  label       cert renewal
-  log         ~/.sectape/sessions/cert_renewal/pane_48213.raw
-  terminal    173x48   shell integration: on
-  another tab? `sectape attach`   finish with `exit`
+
+  ⏺ REC  cert renewal
+  ────────────────────────────────────────────────────────────────
+    pane      1  · 173×48 · integration on
+    tape      ~/.sectape/sessions/cert_renewal/pane_01.raw
+
+    note "…" annotate   ·   sectape attach another pane   ·   exit finish
 
 $ ... work normally ...
 $ exit
 
-■ pane #48213 stopped.
-✓ ~/sectape/cert renewal.md
-  14 commands from 1 pane(s) via shell integration, 2 failed
+  ⏹ STOP  cert renewal
+  ────────────────────────────────────────────────────────────────
+    14 commands · 2 failed · 12m 4s
+    → ~/sectape/cert renewal.md
 ```
 
 The export:
@@ -69,6 +72,10 @@ sectape doctor             check the install
 `export` and `show` take `-f markdown|json|text|html`, `-o PATH`, and filters:
 `--only-failed`, `--last N`, `--grep RE`, `--no-output`.
 
+A filtered `export` is a subset, so it gets its own file — `lab (failed).md`,
+`lab (last 20).md` — rather than overwriting the recording's complete
+document. `-o` still puts it exactly where you say.
+
 ## Notes while you work
 
 A transcript tells you what you ran. It does not tell you *why*. From inside a
@@ -76,7 +83,7 @@ recording:
 
 ```console
 $ sectape note "load is climbing - checking the worker pool"
-noted load is climbing - checking the worker pool
+  ❯ noted load is climbing - checking the worker pool
 ```
 
 Notes are timestamped and land between the right commands in the export:
@@ -88,7 +95,9 @@ Notes are timestamped and land between the right commands in the export:
 ### 2. `grep -c . /etc/hosts`
 ```
 
-`sectape note` is itself left out of the transcript.
+`sectape note` is itself left out of the transcript. Notes are redacted and
+held to `max_output_lines` / `max_output_chars` in the export, like command
+output; `notes.jsonl` keeps what you wrote in full.
 
 Handy aliases:
 
@@ -116,7 +125,7 @@ zsh/bash, an ssh session inside the recording) fall back to reading commands
 off the rendered screen, and the export says so.
 
 zsh uses `preexec`/`precmd`. bash has no preexec hook, so it rides the `DEBUG`
-trap and reads the typed line from `history 1` — `BASH_COMMAND` alone holds
+trap (a trap and a `PROMPT_COMMAND` of your own are kept and run first) and reads the typed line from `history 1` — `BASH_COMMAND` alone holds
 only the current *simple* command, which would record `a; b` and loops as their
 first clause. If you have disabled bash history, command text falls back to
 `BASH_COMMAND` and compound lines are truncated.
@@ -137,11 +146,11 @@ first clause. If you have disabled bash history, command text falls back to
 
 ## Output
 
-Three formats, selected with `-f` or `output.format` in the config:
+Four formats, selected with `-f` or `output.format` in the config:
 
 | Format | What it's for |
 |---|---|
-| `markdown` | A readable document. Content between `<!-- sectape:begin -->` and `<!-- sectape:end -->` is regenerated; anything you write outside it is preserved. |
+| `markdown` | A readable document. The summary and transcript between `<!-- sectape:begin -->` and `<!-- sectape:end -->` are regenerated, and the YAML frontmatter is refreshed; prose you write around the block is preserved. |
 | `json` | Structured steps — command, output, exit code, cwd, duration — for feeding somewhere else. |
 | `text` | Plain prompt-and-output, good for piping. |
 | `html` | A self-contained page — no external assets, readable in light or dark, fine to hand to someone. |
@@ -183,9 +192,11 @@ care as your shell history — more, since they include command *output*.
 - Anything you `cat`, `echo` or paste **is**.
 - `redact = true` (the default) strips high-confidence secrets — private key
   blocks, `Authorization:` headers, AWS/GitHub/Slack/OpenAI-shaped tokens —
-  from **exports**. It does not rewrite the raw logs. Add your own patterns
-  under `[redaction]`.
-- The state directory is created `0700` and pane logs `0600`.
+  from **exports**, transcript and notes alike. It does not rewrite the raw
+  logs or `notes.jsonl`. Add your own patterns under `[redaction]`.
+- The state directory, the recordings in it, the pane logs and your notes
+  are all owner-only (`0700`/`0600`). Exports follow your umask, since they
+  are the documents you hand to someone else.
 - `sectape rm <session> --yes` deletes a recording's raw logs.
 
 ## Tests
@@ -194,7 +205,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-214 tests, no dependencies. The end-to-end ones drive the real CLI through a
+498 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS

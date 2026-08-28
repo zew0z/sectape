@@ -95,7 +95,7 @@ class TestRecording(unittest.TestCase):
         pid, master = self.spawn("rec", label)
         sink = []
         try:
-            read_until(master, "recording", 25, sink)
+            read_until(master, "REC", 25, sink)
             time.sleep(1.0)
             for line in lines:
                 if callable(line):
@@ -143,7 +143,7 @@ class TestRecording(unittest.TestCase):
         pid, master = self.spawn("rec", "term")
         sink = []
         try:
-            read_until(master, "recording", 25, sink)
+            read_until(master, "REC", 25, sink)
             time.sleep(1.0)
             os.write(master, b"echo before-term\n")
             time.sleep(0.8)
@@ -209,13 +209,262 @@ class TestRecording(unittest.TestCase):
                                     "started": time.time()}},
             }))
             out = self.session(["echo second-pane"])
-            self.assertIn("Rejoining", out)
+            self.assertIn("rejoining", out.lower())
             session = json.loads((state / "current.json").read_text())
             self.assertIn("99999", session["panes"],
                           "the other pane's registration was destroyed")
         finally:
             keeper.terminate()
             keeper.wait(timeout=10)
+
+    def test_stop_from_inside_ends_the_session(self):
+        # `sectape stop` typed into a recorded shell must end the recording,
+        # not just export while the pane keeps running.
+        import pty
+        pid, master = pty.fork()
+        if pid == 0:
+            try:
+                os.execve(sys.executable,
+                          [sys.executable, "-m", "sectape", "rec", "inside"], self.env)
+            except Exception:
+                pass
+            os._exit(127)
+        set_winsize(master, self.ROWS, self.COLS)
+        sink = []
+        try:
+            read_until(master, "REC", 25, sink)
+            time.sleep(1.0)
+            os.write(master, b"echo before-stop\n")
+            time.sleep(0.6)
+            os.write(master,
+                     f"{sys.executable} -m sectape stop\n".encode())
+            read_until(master, None, 25, sink)
+            exited = self.reap(pid, 20)
+            self.assertTrue(exited, "recorder did not exit when stopped from inside")
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        self.assertTrue((self.exports / "inside.md").exists(),
+                        sorted(p.name for p in self.exports.iterdir()))
+        self.assertIn("echo before-stop", (self.exports / "inside.md").read_text())
+
+    def test_note_helper_is_available_inside_a_recording(self):
+        self.session(["note 'annotated from inside'", "echo after"], label="helper")
+        text = (self.exports / "helper.md").read_text()
+        self.assertIn("annotated from inside", text)
+        # the helper itself is plumbing, not a recorded command
+        self.assertNotIn("### 1. `note", text)
+
+    def test_panes_are_numbered_one_and_two(self):
+        self.session(["echo first-pane"], label="numbered")
+        logs = sorted((self.root / "state" / "sessions" / "numbered").glob("pane_*.raw"))
+        self.assertEqual([p.name for p in logs], ["pane_01.raw"])
+
+    def test_the_last_pane_out_finishes_the_session_even_when_it_attached(self):
+        # Leaving the first tab before the attached one stranded the whole
+        # recording: no panes left, nothing exported, and current.json still
+        # on disk claiming to be live. Only `rec` used to finish a session.
+        state = self.root / "state"
+        first_pid, first = self.spawn("rec", "handover")
+        read_until(first, "REC", 25)
+        time.sleep(1.0)
+        os.write(first, b"echo from-first\n")
+        time.sleep(0.8)
+
+        second_pid, second = self.spawn("attach")
+        read_until(second, "REC", 25)
+        time.sleep(1.0)
+        os.write(second, b"echo from-second\n")
+        time.sleep(0.8)
+
+        try:
+            os.write(first, b"exit\n")
+            left, _ = read_until(first, None, 20)
+            self.reap(first_pid)
+            self.assertIn("still recording", left,
+                          "the recorder that left first ended the session")
+            self.assertTrue((state / "current.json").exists(),
+                            "session was closed while a pane was still live")
+
+            os.write(second, b"exit\n")
+            read_until(second, None, 20)
+            self.reap(second_pid)
+        finally:
+            for fd in (first, second):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+        note = self.exports / "handover.md"
+        self.assertTrue(note.exists(),
+                        "the attached pane left without exporting: "
+                        + str(sorted(p.name for p in self.exports.iterdir())))
+        text = note.read_text()
+        self.assertIn("echo from-first", text)
+        self.assertIn("echo from-second", text)
+        self.assertFalse((state / "current.json").exists(),
+                         "the finished session is still marked active")
+
+    def test_no_integration_reads_commands_off_the_screen(self):
+        # The documented fallback for other shells and ssh sessions inside a
+        # recording. It needs a prompt the reader recognises, so use the
+        # classic user@host form rather than this suite's bare `%`.
+        for name in (".zshrc", ".bashrc"):
+            (self.rc / name).write_text("PS1='user@host:~$ '\n")
+        pid, master = self.spawn("rec", "reconstructed", "--no-integration")
+        try:
+            read_until(master, "REC", 25)
+            time.sleep(1.2)
+            for line in ("echo alpha-one", "echo omega-two"):
+                os.write(master, (line + "\n").encode())
+                time.sleep(0.6)
+            os.write(master, b"exit\n")
+            read_until(master, None, 25)
+            self.reap(pid)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        note = self.exports / "reconstructed.md"
+        self.assertTrue(note.exists(),
+                        sorted(p.name for p in self.exports.iterdir()))
+        text = note.read_text()
+        self.assertIn("Reconstructed", text,
+                      "an export read off the screen must say so")
+        self.assertIn("### 1. `echo alpha-one`", text)
+        self.assertIn("### 2. `echo omega-two`", text)
+        self.assertIn("alpha-one", text)
+
+    def test_output_written_as_the_shell_exits_is_captured(self):
+        # The recorder drains the pty after its loop ends. Without that, a
+        # command printing on its way out lost the tail of its output.
+        pid, master = self.spawn("rec", "lastword")
+        try:
+            read_until(master, "REC", 25)
+            time.sleep(1.2)
+            os.write(master, b"seq 1 4000 | tail -3; exit\n")
+            read_until(master, None, 25)
+            self.reap(pid)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        text = (self.exports / "lastword.md").read_text()
+        self.assertIn("seq 1 4000", text)
+        self.assertIn("4000", text, "the last command's output was lost")
+
+    def test_stop_force_stops_the_recorder_rather_than_orphaning_it(self):
+        # --force used to delete the session and leave the recorder running,
+        # so the user was left in a shell still logging to a session that no
+        # longer existed, and that work never reached an export.
+        state = self.root / "state"
+        pid, master = self.spawn("rec", "forced")
+        try:
+            read_until(master, "REC", 25)
+            time.sleep(1.2)
+            os.write(master, b"echo before-force\n")
+            time.sleep(0.8)
+
+            # Keep reading the pty while `stop` runs: a real terminal always
+            # drains, and a recorder blocked on a full buffer cannot act on a
+            # signal.
+            stopper = subprocess.Popen(
+                [sys.executable, "-m", "sectape", "stop", "--force"],
+                env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True)
+            deadline = time.time() + 40
+            while time.time() < deadline and stopper.poll() is None:
+                read_until(master, None, 0.3)
+            out, err = stopper.communicate(timeout=20)
+            self.assertEqual(stopper.returncode, 0, out + err)
+
+            deadline = time.time() + 20
+            stopped = False
+            while time.time() < deadline:
+                done, _ = os.waitpid(pid, os.WNOHANG)
+                if done:
+                    stopped = True
+                    break
+                read_until(master, None, 0.3)
+            if not stopped:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            self.assertTrue(stopped,
+                            f"--force left the recorder running\nstdout={out!r}")
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        self.assertFalse((state / "current.json").exists())
+        note = self.exports / "forced.md"
+        self.assertTrue(note.exists(),
+                        sorted(p.name for p in self.exports.iterdir()))
+        self.assertIn("echo before-force", note.read_text())
+
+    def test_a_session_killed_inside_a_full_screen_program_still_exports(self):
+        # The alternate screen is never left when the recorder is killed in
+        # `less` or `vim`, and the transcript used to be discarded in favour
+        # of the redrawn screen.
+        pid, master = self.spawn("rec", "fullscreen")
+        try:
+            read_until(master, "REC", 25)
+            time.sleep(1.2)
+            os.write(master, b"echo important-work\n")
+            time.sleep(0.8)
+            # enter the alternate screen and stay there
+            os.write(master, b"printf '\\033[?1049hVIM-SCREEN-NOISE\\n'\n")
+            time.sleep(0.8)
+            os.kill(pid, signal.SIGTERM)
+            read_until(master, None, 20)
+            self.assertTrue(self.reap(pid, 20), "recorder did not stop")
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        note = self.exports / "fullscreen.md"
+        self.assertTrue(note.exists(),
+                        sorted(p.name for p in self.exports.iterdir()))
+        text = note.read_text()
+        self.assertIn("important-work", text, "the transcript was thrown away")
+        # The marker text is part of the command the user typed, so it appears
+        # in that step's heading and in its echoed command line - twice. A
+        # third occurrence would mean the redrawn screen was kept as output.
+        self.assertEqual(text.count("VIM-SCREEN-NOISE"), 2,
+                         "the alternate-screen redraw was captured as output")
+
+    def test_recording_again_under_the_same_label_says_it_is_appending(self):
+        # The panes of an earlier recording are kept and numbered as though
+        # they had been open alongside this one, so say so rather than
+        # letting the export quietly contain both.
+        self.session(["echo first-day"], label="reused")
+        pid, master = self.spawn("rec", "reused")
+        sink = []
+        try:
+            read_until(master, "REC", 25, sink)
+            time.sleep(1.0)
+            os.write(master, b"echo second-day\n")
+            time.sleep(0.7)
+            os.write(master, b"exit\n")
+            read_until(master, None, 25, sink)
+            self.reap(pid)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        printed = "".join(sink)
+        self.assertIn("already holds", printed,
+                      "appending to an existing label was silent")
+        text = (self.exports / "reused.md").read_text()
+        self.assertIn("echo first-day", text)
+        self.assertIn("echo second-day", text)
 
     def test_show_prints_the_active_recording(self):
         self.session(["echo showable"])
@@ -224,10 +473,6 @@ class TestRecording(unittest.TestCase):
             env=self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0)
         self.assertIn("echo showable", result.stdout)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 @unittest.skipUnless(shutil.which("bash"), "bash not available")
@@ -269,7 +514,7 @@ class TestBashRecording(unittest.TestCase):
         set_winsize(master, self.ROWS, self.COLS)
         sink = []
         try:
-            read_until(master, "recording", 25, sink)
+            read_until(master, "REC", 25, sink)
             time.sleep(1.2)
             for line in lines:
                 os.write(master, (line + "\n").encode())
@@ -328,3 +573,7 @@ class TestBashRecording(unittest.TestCase):
         text = (self.root / "out" / "bash-e2e.md").read_text()
         self.assertIn("### 1. `echo one; echo two`", text)
         self.assertIn("### 2. `for i in 1 2; do echo n$i; done`", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

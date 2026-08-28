@@ -61,6 +61,28 @@ class TestRedaction(unittest.TestCase):
 
 
 class TestCleaning(TempConfig):
+    def test_a_lone_art_line_is_kept(self):
+        # A single art-heavy line is a table border or a horizontal rule, not
+        # a banner. Snipping those individually gutted every `mysql` table.
+        table = ("+----+-------+\n| id | name  |\n+----+-------+\n"
+                 "| 1  | alice |\n+----+-------+")
+        self.assertEqual(clean_terminal_output(table), table)
+
+    def test_a_lone_horizontal_rule_is_kept(self):
+        out = clean_terminal_output("Results\n" + "=" * 30 + "\nport 80 open")
+        self.assertIn("=" * 30, out)
+        self.assertNotIn("SNIP", out)
+
+    def test_two_art_lines_in_a_row_are_a_banner(self):
+        out = clean_terminal_output("hi\n" + "\n".join(["/\\/\\/\\/\\/\\/\\/\\/\\/\\"] * 2) + "\nbye")
+        self.assertEqual(out.split("\n"), ["hi", "<SNIP: ASCII-art banner>", "bye"])
+
+    def test_banner_snip_keeps_surrounding_order(self):
+        out = clean_terminal_output(
+            "before\n" + "\n".join(["|||||||||||||||||||"] * 3) + "\nafter")
+        self.assertEqual(out.split("\n"),
+                         ["before", "<SNIP: ASCII-art banner>", "after"])
+
     def test_ascii_banner_snipped(self):
         banner = "\n".join(["/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\"] * 5)
         out = clean_terminal_output(banner + "\nreal output")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import tempfile
 import unittest
@@ -42,6 +43,10 @@ class TempConfig(unittest.TestCase):
 
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="sectape-test-"))
+        # Also belt-and-braces for a direct `python tests/test_config.py`,
+        # where conftest.py does not run.
+        self._saved_env = {k: os.environ.pop(k) for k in list(os.environ)
+                           if k.startswith("SECTAPE_")}
         self._saved = config.settings
         config.settings = config.Settings(
             state_dir=self.root / "state",
@@ -51,6 +56,7 @@ class TempConfig(unittest.TestCase):
         self.addCleanup(self._restore)
 
     def _restore(self) -> None:
+        os.environ.update(self._saved_env)
         config.settings = self._saved
         shutil.rmtree(self.root, ignore_errors=True)
 

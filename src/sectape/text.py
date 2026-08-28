@@ -40,9 +40,6 @@ TRIVIAL_CMDS = {
 }
 
 
-# Addresses that are never the box you are attacking.
-
-
 def base_command(cmd: str) -> str:
     """The program actually being run, looking past sudo/env-style prefixes.
 
@@ -68,6 +65,8 @@ def base_command(cmd: str) -> str:
     return ""
 
 
+# Only high-confidence secrets. Passwords for a lab box and CTF flags are
+# often the point of the recording, so they are deliberately left alone.
 REDACTIONS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
      "<REDACTED: private key>"),
@@ -121,6 +120,39 @@ ART_CHARS = set(r"/\#_|-~+=*`^<>()[]{}.:'\"")
 
 NOISE_LINES = {"%", "∙", "^D", ""}
 
+# How many art-heavy lines in a row make a banner. One on its own is a table
+# border or a horizontal rule and belongs in the output; replacing those
+# individually gutted every `mysql`, `psql` and `column -t` table into rows of
+# <SNIP> markers.
+BANNER_MIN_LINES = 2
+
+
+def trim_for_export(text: str, max_lines: int | None = None,
+                    max_chars: int | None = None) -> str:
+    """Bound a block of prose to the configured output limits.
+
+    Command output has always been trimmed for readability; notes were not, so
+    `cat big.log | sectape note` put the whole file into every export. The
+    note itself is kept in full in notes.jsonl - this only bounds the
+    document, and says how much it left out.
+    """
+    if not text:
+        return ""
+    max_lines = config.settings.max_output_lines if max_lines is None else max_lines
+    max_chars = config.settings.max_output_chars if max_chars is None else max_chars
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if len(lines) > max_lines:
+        dropped = len(lines) - max_lines
+        tail_n = max(1, min(20, max_lines // 3))
+        head_n = max(1, max_lines - tail_n)
+        lines = (lines[:head_n]
+                 + [f"<SNIP: {dropped} more lines>"]
+                 + lines[-tail_n:])
+    out = "\n".join(lines)
+    if len(out) > max_chars:
+        out = out[:max_chars] + f"\n<SNIP: truncated at {max_chars} chars>"
+    return out
+
 
 def clean_terminal_output(text: str, max_lines: int | None = None,
                           max_chars: int | None = None) -> str:
@@ -133,14 +165,22 @@ def clean_terminal_output(text: str, max_lines: int | None = None,
     lines = text.split("\n")
 
     cleaned: list[str] = []
-    in_banner = False
+    banner: list[str] = []
     blanks = 0
+
+    def flush_banner() -> None:
+        if len(banner) >= BANNER_MIN_LINES:
+            cleaned.append("<SNIP: ASCII-art banner>")
+        else:
+            cleaned.extend(banner)
+        banner.clear()
 
     for line in lines:
         line = line.rstrip()
         stripped = line.strip()
 
         if stripped in NOISE_LINES:
+            flush_banner()
             if stripped == "":
                 blanks += 1
                 if blanks <= 1 and cleaned:
@@ -149,18 +189,18 @@ def clean_terminal_output(text: str, max_lines: int | None = None,
         blanks = 0
 
         if len(line) > 300:
+            flush_banner()
             cleaned.append(line[:250] + " ... <SNIP: line over 300 chars>")
-            in_banner = False
             continue
 
         art = sum(1 for c in stripped if c in ART_CHARS)
         if len(stripped) > 15 and art / len(stripped) > 0.6:
-            if not in_banner:
-                in_banner = True
-                cleaned.append("<SNIP: ASCII-art banner>")
+            banner.append(line)
             continue
-        in_banner = False
+        flush_banner()
         cleaned.append(line)
+
+    flush_banner()
 
     while cleaned and cleaned[-1] == "":
         cleaned.pop()
@@ -184,8 +224,3 @@ def clean_terminal_output(text: str, max_lines: int | None = None,
     if len(out) > max_chars:
         out = out[:max_chars] + f"\n<SNIP: output truncated at {max_chars} chars>"
     return out.strip()
-
-
-# --------------------------------------------------------------------------
-# Transcript -> steps
-# --------------------------------------------------------------------------

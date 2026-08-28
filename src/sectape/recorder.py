@@ -63,9 +63,24 @@ def prepare_shell(no_integration: bool) -> tuple[str, str, Path | None]:
     return shell, name, wrapper
 
 
+def self_invocation() -> tuple[str, str]:
+    """How to re-run this sectape: (executable, extra argument words).
+
+    Kept as two pieces so the injected shell function can call it without an
+    eval, which would mangle arguments containing spaces or quotes.
+    """
+    script = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0] else None
+    if script and script.is_file() and script.name.startswith("sectape"):
+        return str(script), ""
+    return sys.executable, "-m sectape"
+
+
 def _spawn_shell(shell: str, name: str, wrapper: Path | None) -> None:
     """Runs in the forked child. Never returns."""
     os.environ["SECTAPE_ACTIVE"] = "1"
+    binary, extra = self_invocation()
+    os.environ["SECTAPE_BIN"] = binary
+    os.environ["SECTAPE_BIN_ARGS"] = extra
     os.environ.pop("SECTAPE_INTEGRATION_LOADED", None)
 
     try:
@@ -235,8 +250,3 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
             pass
 
     return os.waitstatus_to_exitcode(status) if status else 0
-
-
-# --------------------------------------------------------------------------
-# Webhook receiver (the browser userscript posts room data here)
-# --------------------------------------------------------------------------

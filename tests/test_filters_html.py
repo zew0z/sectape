@@ -1,3 +1,4 @@
+import pathlib
 import re
 import unittest
 
@@ -62,9 +63,44 @@ class TestHtml(TempConfig):
         out = to_html(self.rec())
         self.assertTrue(out.startswith("<!doctype html>"))
         self.assertIn("<style>", out)
+        # No external resources of any kind - the page must work offline.
         self.assertNotIn("http://", out)
         self.assertNotIn("https://", out)
-        self.assertNotIn("<script", out)
+        self.assertNotIn("src=", out)
+        self.assertNotIn("@import", out)
+        self.assertNotIn("url(", out)
+
+    def test_script_is_inline_and_small(self):
+        out = to_html(self.rec())
+        self.assertIn("<script>", out)
+        script = out.split("<script>")[1].split("</script>")[0]
+        self.assertIn("localStorage", script)
+        self.assertNotIn("src=", out.split("<script>")[0].split("<body>")[-1])
+
+    def test_toggles_are_present(self):
+        out = to_html(self.rec())
+        self.assertIn('data-toggle="wrap"', out)
+        self.assertIn('data-toggle="failed"', out)
+        self.assertIn('aria-pressed="false"', out)
+
+    def test_stats_strip(self):
+        out = to_html(self.rec())
+        self.assertIn('class="stats"', out)
+        self.assertIn(">commands<", out)
+        self.assertIn(">failed<", out)
+
+    def test_pane_breaks_only_for_multi_pane(self):
+        steps = [Step(cmd="a", started=1.0, pane="01"),
+                 Step(cmd="b", started=2.0, pane="02")]
+        # the class name also appears in the stylesheet, so match the element
+        self.assertIn('class="pane-break"', to_html(Recording("r", steps, panes=2)))
+        self.assertNotIn('class="pane-break"', to_html(Recording("r", steps, panes=1)))
+
+    def test_notes_render_as_tape_labels(self):
+        rec = Recording("r", [], 1, notes=[{"at": 1.0, "text": "hand written"}])
+        out = to_html(rec)
+        self.assertIn('class="entry note"', out)
+        self.assertIn("hand written", out)
 
     def test_title_and_commands_present(self):
         out = to_html(self.rec())
@@ -159,6 +195,74 @@ class TestCompletion(unittest.TestCase):
             for name in ("rec", "attach", "stop", "note", "export", "show",
                          "list", "status", "rm", "config", "doctor"):
                 self.assertIn(name, script)
+
+
+class TestFilteredExportKeepsItsOwnFile(TempConfig):
+    """A filtered export is a subset, not a replacement.
+
+    Writing it to the recording's own file replaced the complete document
+    with it - four commands down to one, silently.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import base64
+        session = self.sessions / "lab"
+        session.mkdir(parents=True, exist_ok=True)
+        b64 = lambda t: base64.b64encode(t.encode()).decode()
+        raw = ""
+        for i, (cmd, code) in enumerate([("nmap -sV host", 0), ("gobuster dir", 0),
+                                         ("hydra ssh", 1), ("ssh user@box", 0)]):
+            raw += f"\x1b]7337;SECTAPE;b|{b64(cmd)}|{1700000000 + i}\x07out\r\n"
+            raw += (f"\x1b]7337;SECTAPE;e|{code}|{1700000000 + i}.5"
+                    f"|{b64('/tmp')}\x07")
+        (session / "pane_01.raw").write_text(raw, encoding="utf-8")
+        self.out = config.settings.output_dir
+
+    def run_export(self, *argv):
+        from sectape.cli import cmd_export
+        from sectape.cli import build_parser
+        import contextlib
+        import io
+        args = build_parser().parse_args(["export", "lab", *argv])
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(cmd_export(args), 0)
+        return buffer.getvalue().strip()
+
+    def steps_in(self, path):
+        return sum(1 for line in pathlib.Path(path).read_text().split("\n")
+                   if line.startswith("### "))
+
+    def test_the_whole_recording_goes_to_the_plain_name(self):
+        path = self.run_export()
+        self.assertEqual(pathlib.Path(path).name, "lab.md")
+        self.assertEqual(self.steps_in(path), 4)
+
+    def test_a_filtered_export_does_not_overwrite_it(self):
+        whole = self.run_export()
+        filtered = self.run_export("--only-failed")
+        self.assertNotEqual(whole, filtered)
+        self.assertEqual(pathlib.Path(filtered).name, "lab (failed).md")
+        self.assertEqual(self.steps_in(filtered), 1)
+        self.assertEqual(self.steps_in(whole), 4, "the full export was gutted")
+
+    def test_each_filter_names_itself(self):
+        self.assertEqual(pathlib.Path(self.run_export("--last", "2")).name,
+                         "lab (last 2).md")
+        self.assertEqual(
+            pathlib.Path(self.run_export("--grep", "nmap", "--no-output")).name,
+            "lab (filtered, commands).md")
+
+    def test_dash_o_still_decides(self):
+        target = self.root / "mine.md"
+        path = self.run_export("--only-failed", "-o", str(target))
+        self.assertEqual(pathlib.Path(path), target)
+
+    def test_the_extension_follows_the_format(self):
+        self.assertEqual(
+            pathlib.Path(self.run_export("--only-failed", "-f", "html")).name,
+            "lab (failed).html")
 
 
 if __name__ == "__main__":

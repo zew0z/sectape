@@ -14,25 +14,22 @@ from .config import ConfigError
 from .formats import WRITERS, Recording, export, filter_steps, render
 from .markers import ZSH_HOOKS
 from .recorder import record_pty
-from .session import (add_note, clear_session_if_idle, new_pane_id,
-                      prune_dead_panes, read_notes, read_session,
-                      register_pane, resolve_session_dir, unregister_pane)
+from .session import (add_note, allocate_pane, clear_session_if_idle,
+                      ensure_session_dir, live_panes, pane_label, read_notes,
+                      read_session, read_session_meta, resolve_session_dir,
+                      signal_panes, unregister_pane, wait_for_panes,
+                      write_session_meta)
 from .terminal import current_size
+from .text import redact, trim_for_export
 from .transcript import collect_steps, count_commands
-from .util import human_duration, pid_alive, slugify, write_json_atomic
+from .util import (human_duration, pid_alive, plural, safe_filename,
+                   short_path, slugify, write_json_atomic)
 
-GREEN, CYAN, YELLOW, RED, DIM, OFF = (
-    "\033[1;32m", "\033[1;36m", "\033[1;33m", "\033[1;31m", "\033[2m", "\033[0m")
-
-
-def _colour(enabled: bool):
-    if enabled:
-        return GREEN, CYAN, YELLOW, RED, DIM, OFF
-    return ("",) * 6
+from .ui import Style, fit, style_for
 
 
-def _use_colour() -> bool:
-    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+def ui() -> Style:
+    return style_for()
 
 
 # --------------------------------------------------------------------------
@@ -43,9 +40,18 @@ def _default_label() -> str:
     return time.strftime("session-%Y%m%d-%H%M%S")
 
 
-def _load_recording(session_dir: Path, label: str, meta: dict | None = None) -> Recording:
+def _load_recording(session_dir: Path, label: str | None = None,
+                    meta: dict | None = None) -> Recording:
     steps, panes = collect_steps(session_dir, do_redact=config.settings.redact)
-    meta = meta or {}
+    meta = meta or read_session_meta(session_dir)
+    label = label or meta.get("label") or session_dir.name
+    # Notes end up in the same shared document as the transcript, so they get
+    # the same scrubbing and the same size limits. Only the export is
+    # affected; notes.jsonl keeps what you wrote, in full.
+    notes = [dict(note,
+                  text=trim_for_export(redact(note["text"],
+                                              config.settings.redact)))
+             for note in read_notes(session_dir)]
     return Recording(
         label=label,
         steps=steps,
@@ -53,37 +59,68 @@ def _load_recording(session_dir: Path, label: str, meta: dict | None = None) -> 
         started=meta.get("started"),
         shell=meta.get("shell", ""),
         host=meta.get("host", ""),
-        notes=read_notes(session_dir),
+        notes=notes,
     )
+
+
+def _release_pane(pane_id: str, verb: str) -> int:
+    """Deregister a finished pane and, if it was the last one, end the session.
+
+    Both `rec` and `attach` end this way. When only `rec` did, leaving the
+    first tab before the attached one stranded the recording: no panes left,
+    no export written, and `current.json` still on disk claiming to be live.
+    """
+    u = ui()
+    remaining = unregister_pane(pane_id)
+    if remaining:
+        still = u.grey("· " + plural(remaining, "pane") + " still recording")
+        print(f"\n  {u.grey(u.g('stop'))} pane {pane_label(pane_id)} {verb} {still}")
+        print(f"    {u.grey('run')} {u.bold('sectape stop')} "
+              f"{u.grey('when the session is finished')}")
+        return 0
+    print()
+    session = read_session()
+    if session:
+        _finish(session, quiet=False)
+        clear_session_if_idle()
+    return 0
 
 
 def cmd_rec(args) -> int:
     config.ensure_dirs()
-    g, c, y, r, d, off = _colour(_use_colour())
+    u = ui()
 
     if os.environ.get("SECTAPE_ACTIVE"):
-        print(f"{r}This shell is already being recorded.{off}")
-        print("Open a new tab and run `sectape attach`, or `exit` first.")
+        print(f"  {u.red(u.g('warn'))} this shell is already being recorded.")
+        print(f"    open a new tab and run {u.bold('sectape attach')}, "
+              f"or {u.bold('exit')} first.")
         return 1
 
     label = " ".join(args.label).strip() if args.label else _default_label()
     slug = slugify(label)
-    session_dir = config.settings.sessions_dir / slug
-    session_dir.mkdir(parents=True, exist_ok=True)
+    session_dir = ensure_session_dir(config.settings.sessions_dir / slug)
 
     existing = read_session()
-    live = len([p for p in ((existing or {}).get("panes") or {}).values()
-                if pid_alive(p.get("pid", -1))])
+    live = len(live_panes(existing or {}))
 
     rejoining = bool(existing and existing.get("slug") == slug)
     if rejoining and live:
-        print(f"{y}Rejoining the open session '{existing.get('label')}' "
-              f"({live} pane(s) already recording).{off}")
+        print(f"  {u.yellow(u.g('reel'))} rejoining {u.bold(str(existing.get('label')))} "
+              f"{u.grey('(' + plural(live, 'pane') + ' already recording)')}")
     elif existing and not rejoining:
         if live:
-            print(f"{y}Session '{existing.get('label')}' still has {live} live "
-                  f"pane(s); finishing it first.{off}")
-        _finish(existing, quiet=False)
+            # They have to actually stop. Left running, their recorders would
+            # deregister themselves out of the *new* session's pane registry
+            # when they eventually exit, since there is only one of those.
+            print(f"  {u.yellow(u.g('warn'))} {u.bold(str(existing.get('label')))} "
+                  f"still has {plural(live, 'live pane')}; stopping it first.")
+            signal_panes(existing)
+            left = wait_for_panes()
+            if left:
+                print(f"    {u.yellow(u.g('warn'))} "
+                      f"{plural(left, 'pane')} did not stop.")
+        if config.settings.current_session_file.exists():
+            _finish(read_session() or existing, quiet=False)
 
     if not rejoining:
         write_json_atomic(config.settings.current_session_file, {
@@ -97,42 +134,46 @@ def cmd_rec(args) -> int:
             "panes": {},
         })
 
-    pane_id = new_pane_id()
-    pane_log = session_dir / f"pane_{pane_id}.raw"
-    register_pane(pane_id, pane_log)
+    earlier = len(list(session_dir.glob("pane_*.raw")))
+    if earlier and not rejoining:
+        # Recording under a label that already has logs appends to it: the
+        # export will hold both, and the older panes will be numbered as if
+        # they had been open alongside this one.
+        print(f"  {u.yellow(u.g('warn'))} {u.bold(label)} already holds "
+              f"{plural(earlier, 'recorded pane')}; this one is added to it "
+              f"and the export will contain both.")
+        print(f"    {u.grey('start a separate recording with a new label, or')} "
+              f"{u.bold('sectape rm ' + slug)} {u.grey('first')}")
+
+    write_session_meta(session_dir, read_session() or {})
+    pane_id, pane_log = allocate_pane(session_dir)
 
     rows, cols, _, _ = current_size()
     integration = "off" if args.no_integration else "on"
-    banner = (
-        f"\n{g}● sectape {__version__} recording{off}  {d}pane #{pane_id}{off}\n"
-        f"  label       {c}{label}{off}\n"
-        f"  log         {pane_log}\n"
-        f"  terminal    {cols}x{rows}   shell integration: {integration}\n"
-        f"  {d}another tab? `sectape attach`   finish with `exit`{off}\n"
-    )
+    lines = ["", *u.deck("rec", label)]
+    lines.append(u.field("pane", f"{pane_label(pane_id)}  "
+                                 f"{u.dim(u.g('dot'))} {cols}×{rows} "
+                                 f"{u.dim(u.g('dot'))} integration {integration}"))
+    lines.append(u.field("tape", u.grey(short_path(pane_log))))
+    lines.append("")
+    lines.append(u.hint(('note "…"', "annotate"),
+                        ("sectape attach", "another pane"),
+                        ("exit", "finish")))
+    lines.append("")
+    banner = "\n".join(lines)
 
     record_pty(pane_log, banner,
                no_integration=args.no_integration or not config.settings.shell_integration)
 
-    remaining = unregister_pane(pane_id)
-    print(f"\n{g}■ pane #{pane_id} stopped.{off}")
-    if remaining:
-        print(f"  {remaining} pane(s) still recording - run `sectape stop` when done.")
-        return 0
-
-    session = read_session()
-    if session:
-        _finish(session, quiet=False)
-        clear_session_if_idle()
-    return 0
+    return _release_pane(pane_id, "stopped")
 
 
 def cmd_attach(args) -> int:
     config.ensure_dirs()
-    g, c, y, r, d, off = _colour(_use_colour())
+    u = ui()
 
     if os.environ.get("SECTAPE_ACTIVE"):
-        print(f"{r}This shell is already being recorded.{off}")
+        print(f"  {u.red(u.g('warn'))} this shell is already being recorded.")
         return 1
 
     session = read_session()
@@ -140,40 +181,72 @@ def cmd_attach(args) -> int:
         print("No active session. Start one with: sectape rec [label]")
         return 1
 
-    session_dir = Path(session.get("dir") or
-                       (config.settings.sessions_dir / session.get("slug", "")))
-    session_dir.mkdir(parents=True, exist_ok=True)
-    pane_id = new_pane_id()
-    pane_log = session_dir / f"pane_{pane_id}.raw"
-    register_pane(pane_id, pane_log)
+    session_dir = ensure_session_dir(session.get("dir") or
+                                     (config.settings.sessions_dir
+                                      / session.get("slug", "")))
+    pane_id, pane_log = allocate_pane(session_dir)
 
-    banner = (f"\n{g}● attached to '{session.get('label')}'{off}  {d}pane #{pane_id}{off}\n"
-              f"  {d}`exit` leaves this pane{off}\n")
+    banner = "\n".join([
+        "", *u.deck("rec", str(session.get("label"))),
+        u.field("pane", f"{pane_label(pane_id)}  {u.grey('attached')}"),
+        u.field("tape", u.grey(short_path(pane_log))),
+        "",
+        u.hint(('note "…"', "annotate"), ("exit", "leave this pane")),
+        "",
+    ])
     record_pty(pane_log, banner,
                no_integration=args.no_integration or not config.settings.shell_integration)
 
-    remaining = unregister_pane(pane_id)
-    print(f"\n■ pane #{pane_id} detached. {remaining} pane(s) still recording.")
-    return 0
+    return _release_pane(pane_id, "detached")
 
 
 def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
-    g, c, y, r, d, off = _colour(_use_colour() and not quiet)
+    u = Style(colour=False) if quiet else ui()
     label = session.get("label", "session")
     session_dir = Path(session.get("dir") or
                        (config.settings.sessions_dir / session.get("slug", "")))
     rec = _load_recording(session_dir, label, session)
-    if not rec.steps and not quiet:
-        print(f"{y}No commands were captured; nothing exported.{off}")
+    if not rec.steps and not rec.notes:
+        if not quiet:
+            for line in u.deck("stop", label):
+                print(line)
+            print(u.counter(u.grey("nothing captured")))
+            print()
         return None
     path = export(rec, fmt)
     if not quiet:
         marked = sum(1 for s in rec.steps if s.source == "marker")
-        how = "shell integration" if marked else "prompt heuristics"
-        print(f"{g}✓ {path}{off}")
-        print(f"  {len(rec.steps)} commands from {rec.panes} pane(s) via {how}"
-              + (f", {len(rec.failed)} failed" if rec.failed else ""))
+        parts = [plural(len(rec.steps), "command")]
+        if rec.failed:
+            parts.append(u.red(f"{len(rec.failed)} failed"))
+        if rec.notes:
+            parts.append(plural(len(rec.notes), "note"))
+        if rec.panes > 1:
+            parts.append(plural(rec.panes, "pane"))
+        if rec.wall_time:
+            parts.append(human_duration(rec.wall_time))
+        if not marked:
+            parts.append(u.yellow("reconstructed"))
+        for line in u.deck("stop", label):
+            print(line)
+        print(u.counter(*parts))
+        print(f"    {u.green(u.g('arrow'))} {short_path(path)}")
+        print()
     return path
+
+
+def _confirm(question: str, default: bool = False) -> bool:
+    if not sys.stdin.isatty():
+        return default
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        answer = input(f"{question} {suffix} ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if not answer:
+        return default
+    return answer in ("y", "yes")
 
 
 def cmd_stop(args) -> int:
@@ -183,12 +256,36 @@ def cmd_stop(args) -> int:
         print("No active session. Use `sectape export <session>` for an old one.")
         return 1
 
-    _finish(session, quiet=False, fmt=args.format)
-    live = [p for p in (session.get("panes") or {}).values()
-            if pid_alive(p.get("pid", -1))]
-    if live and not args.force:
-        print(f"  {len(live)} pane(s) still recording, so the session stays open.")
+    inside = bool(os.environ.get("SECTAPE_ACTIVE"))
+    live = live_panes(session)
+
+    # Called from inside a recorded shell: the recorders own the export, so
+    # signal them and let them unwind - that also closes the shell we are in.
+    if inside and live:
+        signal_panes(session)
+        print(f"stopping {plural(len(live), 'pane')}…")
         return 0
+
+    if live:
+        count = len(live)
+        # --force means "yes, stop them too, don't ask". It used to mean
+        # "delete the session and leave the recorders running", which left the
+        # user in a shell still logging to a session that no longer existed.
+        stop_them = args.force or _confirm(
+            f"{plural(count, 'pane')} still recording. Stop them too?", default=False)
+        if stop_them:
+            signal_panes(session)
+            left = wait_for_panes()
+            if left:
+                print(f"{plural(left, 'pane')} did not stop; exporting anyway.")
+            session = read_session() or session
+        else:
+            _finish(session, quiet=False, fmt=args.format)
+            print(f"  {plural(count, 'pane')} still recording, "
+                  "so the session stays open.")
+            return 0
+
+    _finish(session, quiet=False, fmt=args.format)
     if config.settings.current_session_file.exists():
         config.settings.current_session_file.unlink()
     return 0
@@ -198,9 +295,42 @@ def cmd_stop(args) -> int:
 # reading back
 # --------------------------------------------------------------------------
 
+def session_name(session_dir: Path) -> str:
+    """What to call a recording on screen.
+
+    The directory is a slug, and for a label with no ASCII in it that slug is
+    a digest - unreadable on its own. The recording knows its own name.
+    """
+    return read_session_meta(session_dir).get("label") or session_dir.name
+
+
+def sessions_ordered() -> list[Path]:
+    """Recordings newest first - the order `list` prints and indexes."""
+    root = config.settings.sessions_dir
+    if not root.exists():
+        return []
+    return sorted((d for d in root.iterdir()
+                   if d.is_dir() and not d.name.startswith(".")),
+                  key=lambda d: d.stat().st_mtime, reverse=True)
+
+
+def resolve_target(name: str) -> Path | None:
+    """Accept the number `list` printed, or a session name."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    if name.isdigit():
+        ordered = sessions_ordered()
+        index = int(name)
+        if 1 <= index <= len(ordered):
+            return ordered[index - 1]
+        return None
+    return resolve_session_dir(name)
+
+
 def _resolve(name: str) -> Path | None:
     if name:
-        return resolve_session_dir(name)
+        return resolve_target(name)
     session = read_session() or {}
     location = session.get("dir")
     if location:
@@ -221,6 +351,20 @@ def _apply_filters(rec: Recording, args) -> Recording:
     return rec
 
 
+def _filter_suffix(args) -> str:
+    """How a filtered export differs from the whole recording, in a few words."""
+    bits = []
+    if getattr(args, "only_failed", False):
+        bits.append("failed")
+    if getattr(args, "last", None):
+        bits.append(f"last {args.last}")
+    if getattr(args, "grep", ""):
+        bits.append("filtered")
+    if getattr(args, "no_output", False):
+        bits.append("commands")
+    return ", ".join(bits)
+
+
 def cmd_export(args) -> int:
     config.ensure_dirs()
     name = " ".join(args.session).strip() if args.session else ""
@@ -228,9 +372,22 @@ def cmd_export(args) -> int:
     if session_dir is None or not session_dir.exists():
         print(f"No recording found for {name or 'the active session'!r}.")
         return 1
-    label = name or session_dir.name
-    rec = _apply_filters(_load_recording(session_dir, label), args)
+    rec = _apply_filters(_load_recording(session_dir), args)
     dest = Path(args.output).expanduser() if args.output else None
+    if dest is not None and dest.is_dir():
+        print(f"error: {dest} is a directory; -o wants a file path.",
+              file=sys.stderr)
+        return 1
+    narrowed = _filter_suffix(args)
+    if dest is None and narrowed:
+        # A filtered export is a subset, and writing it to the recording's own
+        # file replaced the complete document with it - four commands down to
+        # one, with no warning. Give the subset its own name; -o still puts it
+        # wherever you say.
+        fmt = args.format or config.settings.format
+        suffix = WRITERS[fmt][1] if fmt in WRITERS else ".md"
+        dest = (config.settings.output_dir
+                / f"{safe_filename(rec.label)} ({narrowed}){suffix}")
     path = export(rec, args.format, dest)
     print(path)
     return 0
@@ -243,7 +400,7 @@ def cmd_show(args) -> int:
     if session_dir is None or not session_dir.exists():
         print(f"No recording found for {name or 'the active session'!r}.")
         return 1
-    rec = _apply_filters(_load_recording(session_dir, name or session_dir.name), args)
+    rec = _apply_filters(_load_recording(session_dir), args)
     text, _ = render(rec, args.format or "text")
     sys.stdout.write(text)
     return 0
@@ -266,35 +423,61 @@ def cmd_note(args) -> int:
     if path is None:
         print("Could not write the note.")
         return 1
-    g, c, y, r, d, off = _colour(_use_colour())
+    u = ui()
     first = text.split("\n")[0]
-    print(f"{g}noted{off} {first[:70]}{'…' if len(first) > 70 else ''}")
+    print(f"  {u.green(u.g('note'))} {u.grey('noted')} "
+          f"{first[:72]}{'…' if len(first) > 72 else ''}")
     return 0
 
 
 def cmd_list(args) -> int:
     config.ensure_dirs()
-    root = config.settings.sessions_dir
-    dirs = sorted((d for d in root.iterdir() if d.is_dir() and not d.name.startswith(".")),
-                  key=lambda d: d.stat().st_mtime, reverse=True)
+    dirs = sessions_ordered()
     if args.json:
         print(json.dumps([{
+            "index": i,
             "session": d.name,
+            "label": session_name(d),
             "panes": len(list(d.glob("pane_*.raw"))),
             "commands": count_commands(d),
+            "notes": len(read_notes(d)),
             "modified": d.stat().st_mtime,
-        } for d in dirs], indent=2))
+        } for i, d in enumerate(dirs, 1)], indent=2))
         return 0
+
+    u = ui()
+    print()
     if not dirs:
-        print("No recordings yet. Start one with: sectape rec")
+        print("\n".join(u.deck("stop", "no recordings")))
+        print(f"\n    {u.grey('start one with')} {u.bold('sectape rec')}\n")
         return 0
-    print(f"{'Session':<36} {'Panes':>5} {'Cmds':>5}  Last activity")
-    print("-" * 74)
-    for d in dirs:
+
+    active = read_session() or {}
+    active_dir = active.get("dir")
+    print("\n".join(u.deck("pause", f"recordings {u.grey(f'({len(dirs)})')}")))
+    # One template for the header and every row, so the columns cannot drift
+    # apart - and `fit` measures screen columns, so a name in Japanese or with
+    # an emoji in it lines up like any other.
+    row = "  {mark} {index}  {name}{cmds}{notes}{panes}   {when}"
+    print(u.grey(row.format(mark=" ", index=" #", name=fit("session", 33),
+                            cmds="cmds".rjust(4), notes="notes".rjust(7),
+                            panes="panes".rjust(7), when="last activity")))
+    for i, d in enumerate(dirs, 1):
         count = count_commands(d)
+        notes = len(read_notes(d))
+        panes = len(list(d.glob("pane_*.raw")))
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(d.stat().st_mtime))
-        print(f"{d.name[:36]:<36} {len(list(d.glob('pane_*.raw'))):>5} "
-              f"{'?' if count is None else count:>5}  {when}")
+        running = str(d) == str(active_dir)
+        print(row.format(
+            mark=u.red(u.g("rec")) if running else " ",
+            index=u.bold(str(i).rjust(2)),
+            name=fit(session_name(d), 33),
+            cmds=("?" if count is None else str(count)).rjust(4),
+            notes=str(notes).rjust(7),
+            panes=str(panes).rjust(7),
+            when=u.grey(when)))
+    print(f"\n    {u.grey('show one with')} {u.bold('sectape show 1')} "
+          f"{u.grey('or by name')}\n")
     return 0
 
 
@@ -326,33 +509,43 @@ def cmd_status(args) -> int:
     if args.json:
         print(json.dumps(snapshot(session), indent=2))
         return 0
-    g, c, y, r, d, off = _colour(_use_colour())
-    print(f"{c}sectape {__version__}{off}")
-    print(f"  state    {config.settings.state_dir}")
-    print(f"  output   {config.settings.output_dir}  ({config.settings.format})")
-    print(f"  config   {config.settings.config_path or '(defaults)'}")
+    u = ui()
+    print()
     if not session:
-        print(f"  session  {y}none active{off}")
+        for line in u.deck("stop", "idle"):
+            print(line)
+        print(u.field("output", f"{short_path(config.settings.output_dir)} "
+                                f"{u.grey('(' + config.settings.format + ')')}"))
+        print(u.field("config", short_path(config.settings.config_path)
+                      if config.settings.config_path else u.grey("defaults")))
+        print(f"\n    {u.grey('start one with')} {u.bold('sectape rec')}\n")
         return 0
-    panes = {k: v for k, v in (session.get("panes") or {}).items()
-             if pid_alive(v.get("pid", -1))}
-    print(f"  session  {g}{session.get('label')}{off}")
-    if session.get("started"):
-        print(f"  running  {human_duration(time.time() - session['started'])}")
-    session_dir = Path(session.get("dir"))
+
+    panes = live_panes(session)
+    print("\n".join(u.deck("rec" if panes else "pause", str(session.get("label")))))
+    session_dir = Path(session.get("dir") or
+                       (config.settings.sessions_dir / session.get("slug", "")))
     count = count_commands(session_dir)
-    print(f"  captured {'?' if count is None else count} commands, {len(panes)} live pane(s)")
-    for pid_key, pane in sorted(panes.items()):
+    running = (human_duration(time.time() - session["started"])
+               if session.get("started") else "")
+    print(u.counter("? commands" if count is None else plural(count, "command"),
+                    plural(len(panes), "live pane"), running))
+    for pane_id, pane in sorted(panes.items()):
         log = Path(pane.get("log", ""))
         size = log.stat().st_size / 1024 if log.exists() else 0
-        print(f"           #{pid_key}  pid {pane.get('pid')}  {size:.1f} KiB")
+        pid = pane.get("pid")
+        print(f"      {u.dim(u.g('bar'))} pane {pane_label(pane_id)}  "
+              f"{u.grey('pid ' + str(pid))}  {u.grey(f'{size:.1f} KiB')}")
+    print(u.field("output", f"{short_path(config.settings.output_dir)} "
+                            f"{u.grey('(' + config.settings.format + ')')}"))
+    print()
     return 0
 
 
 def cmd_rm(args) -> int:
     config.ensure_dirs()
     name = " ".join(args.session).strip()
-    session_dir = resolve_session_dir(name)
+    session_dir = resolve_target(name)
     if session_dir is None:
         print(f"No recording matches {name!r}.")
         return 1
@@ -367,6 +560,12 @@ def cmd_rm(args) -> int:
               f"({len(list(session_dir.glob('pane_*.raw')))} pane logs).")
         print("Re-run with --yes to confirm.")
         return 0
+    # This deletes a tree, so confirm one more time that it is a recording and
+    # not something the resolver was talked into.
+    if session_dir.resolve().parent != config.settings.sessions_dir.resolve():
+        print(f"error: {session_dir} is not inside "
+              f"{config.settings.sessions_dir}.", file=sys.stderr)
+        return 1
     shutil.rmtree(session_dir)
     print(f"Deleted {session_dir}")
     return 0
@@ -387,6 +586,10 @@ def cmd_config(args) -> int:
                     "shell_integration", "max_output_lines", "max_output_chars"):
             print(f"{key:20} {getattr(s, key)}")
         print(f"{'config_path':20} {s.config_path or '(defaults)'}")
+        typos = config.unknown_keys(s.config_path) if s.config_path else []
+        if typos:
+            print(f"\nignored, not recognised: {', '.join(typos)}",
+                  file=sys.stderr)
         return 0
     # init
     if path.exists() and not args.force:
@@ -460,17 +663,21 @@ def cmd_completion(args) -> int:
 
 def cmd_doctor(args) -> int:
     config.ensure_dirs()
-    g, c, y, r, d, off = _colour(_use_colour())
+    u = ui()
     ok = True
 
     def check(label, passed, detail="", warn_only=False):
         nonlocal ok
-        mark = f"{g}✓{off}" if passed else (f"{y}!{off}" if warn_only else f"{r}✗{off}")
-        print(f"  {mark} {label}" + (f"  {detail}" if detail else ""))
+        if passed:
+            mark = u.green(u.g("tick"))
+        else:
+            mark = u.yellow("!") if warn_only else u.red(u.g("cross"))
+        print(f"    {mark} {label.ljust(30)}{u.grey(detail)}")
         if not passed and not warn_only:
             ok = False
 
-    print(f"{c}sectape {__version__} - doctor{off}\n")
+    print()
+    print("\n".join(u.deck("pause", f"doctor {u.grey('sectape ' + __version__)}")))
     check("python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0])
     check("platform supported", sys.platform != "win32", sys.platform)
     check("stdin is a tty", sys.stdin.isatty(),
@@ -489,16 +696,23 @@ def cmd_doctor(args) -> int:
           warn_only=True)
     check("integration hooks render", "_sectape_preexec" in ZSH_HOOKS.format(version=__version__))
     check("output format valid", config.settings.format in WRITERS, config.settings.format)
+    if config.settings.config_path:
+        typos = config.unknown_keys(config.settings.config_path)
+        check("config keys recognised", not typos,
+              ", ".join(typos) if typos else "", warn_only=True)
 
     session = read_session()
     if session:
         stale = [k for k, v in (session.get("panes") or {}).items()
                  if not pid_alive(v.get("pid", -1))]
         check("no stale panes", not stale,
-              f"{len(stale)} dead pane(s) will be pruned" if stale else "", warn_only=True)
+              f"{plural(len(stale), 'dead pane')} will be pruned" if stale else "",
+              warn_only=True)
 
     print()
-    print(f"{g}All good.{off}" if ok else f"{y}Some checks failed (see above).{off}")
+    print(f"    {u.green('all good.')}" if ok
+          else f"    {u.yellow('some checks failed (see above).')}")
+    print()
     return 0 if ok else 1
 
 
@@ -543,7 +757,7 @@ def build_parser() -> argparse.ArgumentParser:
     stop = sub.add_parser("stop", aliases=["finish"], help="export and end the session")
     stop.add_argument("-f", "--format", choices=sorted(WRITERS))
     stop.add_argument("--force", action="store_true",
-                      help="end even if panes are still recording")
+                      help="stop any panes still recording, without asking")
     stop.set_defaults(func=cmd_stop)
 
     exp = sub.add_parser("export", help="write a recording to a file")
@@ -597,7 +811,13 @@ def main(argv=None) -> int:
         return 1
 
     try:
-        config.load(Path(args.config).expanduser() if args.config else None)
+        chosen = Path(args.config).expanduser() if args.config else None
+        # A missing *default* config is normal; a missing one you named on the
+        # command line is a typo, and silently falling back to the defaults
+        # hid it.
+        if chosen is not None and not chosen.exists():
+            raise ConfigError(f"{chosen}: no such configuration file")
+        config.load(chosen)
         overrides = {}
         if args.state_dir:
             overrides["state_dir"] = Path(args.state_dir).expanduser()
@@ -616,10 +836,34 @@ def main(argv=None) -> int:
     if not hasattr(args, "no_integration"):
         args.no_integration = False
     try:
-        return args.func(args) or 0
+        result = args.func(args) or 0
+        # Flush inside the guard. Left to interpreter shutdown, a failing
+        # flush escapes as "Exception ignored" and exit code 120 instead of
+        # reaching the handlers below.
+        sys.stdout.flush()
+        return result
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except BrokenPipeError:
+        # `sectape show | head`, or quitting `less` early. The reader going
+        # away is not an error, and complaining about it is noise. stdout is
+        # pointed at devnull so the interpreter's own shutdown flush cannot
+        # raise again and print "Exception ignored".
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except OSError:
+            pass
+        return 128 + 13                 # what a SIGPIPE death would report
+    except OSError as exc:
+        # A full disk, a read-only output directory, a path that is really a
+        # directory: ordinary conditions that used to end in a traceback.
+        detail = getattr(exc, "strerror", None) or str(exc)
+        where = getattr(exc, "filename", None)
+        print(f"error: {detail}" + (f": {where}" if where else ""),
+              file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\ninterrupted.")
         return 130

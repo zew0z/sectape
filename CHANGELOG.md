@@ -1,5 +1,245 @@
 # Changelog
 
+## Unreleased
+
+### Compatibility
+
+Behaviour an existing setup may notice. Each is described in full below.
+
+- A `--config` path that does not exist is now an error rather than silently
+  ignored, and config values are checked against their type: `redact = "no"`
+  used to mean *true*, and now says so instead.
+- `export` with a filter writes `<label> (failed).md` rather than overwriting
+  `<label>.md`. `-o` is unaffected.
+- Exports are created with your umask instead of always `0600`; the state tree
+  is unchanged and stays owner-only.
+- `stop --force` stops the panes that are still recording instead of leaving
+  them running.
+- Notes are held to `max_output_lines` / `max_output_chars` in exports, as
+  command output already was. `notes.jsonl` is unchanged.
+- `list --json` gained a `label` field alongside `session`.
+
+### Fixed
+
+- **`sectape rm` could delete a directory outside the session tree.** A name
+  from the command line was tried as a raw path first, so
+  `sectape rm ../../work --yes` resolved to, and then removed, something that
+  was never a recording; an absolute path did the same. A recording is now
+  required to be a direct child of the sessions directory, and the delete
+  itself re-checks that before removing anything.
+- **A `$` in `ZDOTDIR` or `$HOME` silently stripped your shell configuration.**
+  The throwaway wrapper interpolated the real directory into shell source
+  unquoted, so a path containing `$`, a backtick, a brace or a quote resolved
+  to something else - and the recorded shell started with none of your own rc
+  files, prompt or aliases. Paths are now quoted.
+- **`sectape stop --force` orphaned the recorders.** It deleted the session and
+  left them running, so you were still in a shell logging to a recording that
+  no longer existed, and that work never reached the export. `--force` now
+  means what its help says: stop the panes too, without asking.
+- **`sectape show | head` complained.** Closing the pipe early - `head`,
+  `grep -m1`, quitting `less` - surfaced as a traceback, and once that was
+  tidied, as `error: Broken pipe`. The reader going away is not an error: it
+  is now silent, with the exit status a program killed by SIGPIPE would
+  report. Output is also flushed while the error handlers are still in scope,
+  so a failing flush cannot escape as "Exception ignored" and exit code 120.
+- **A pane record with no usable pid was immortal, and could have signalled
+  every process you own.** `pid_alive` is called with a default of `-1` for a
+  pane that lost its pid, and `os.kill(-1, 0)` does not raise - it addresses
+  every process the caller may signal - so such a pane counted as alive
+  forever and the session could never go idle. Worse, `signal_panes` would
+  then have passed `-1` to `os.kill` with SIGTERM. Only a positive id is now
+  treated as a process, and the signal path checks again before it fires.
+- **Every recording named in another script shared one directory.** With no
+  ASCII left to slug, the fallback was the single fixed name `room`, so
+  `日本語のセッション`, `별개의 세션` and `Привет мир` were all the same session
+  and their commands merged into one export. Distinct labels now get distinct
+  directories; the readable name still names the export.
+- **A damaged `current.json` crashed the CLI.** `[1, 2, 3]` is valid JSON, so a
+  state file holding a list (or a bare string, or a number) got past the
+  loader and met a caller doing `.get` on it. Only a JSON object counts as
+  state now; anything else reads as no session at all, which is what a
+  malformed file already did.
+- **Resizing the terminal mid-recording scrambled everything after it.** The
+  replay used the first size marker for the whole capture, so once the window
+  changed the wrap column was stale and a `\r` returned to the wrong row:
+  `xxxxxxxx...OVERWRITTENxxxx` where the screen had shown `OVERWRITTEN...`.
+  The replayer now follows every size marker, including one written while a
+  command was still running. (`VTScreen.resize` existed for this and had never
+  been wired up.)
+- **A recording killed inside `vim` or `less` lost the whole transcript.** If
+  the capture ended with the alternate screen still up - the recorder killed,
+  or `sectape stop` run from another tab - the replay returned the redrawn
+  full-screen buffer and discarded the real session, which is exactly
+  backwards: the screen is the noise, the transcript is the point. The stashed
+  transcript is now what gets exported.
+- **Recording again under an existing label was silent, and the export said
+  the wrong thing about it.** The earlier panes are kept and renumbered as
+  though they had been open alongside the new one, so two separate days came
+  out as "pane 1" and "pane 2" with an elapsed time of two seconds for a
+  document spanning a day. `rec` now says it is appending and how to avoid it,
+  and elapsed time and the document date are measured over the content that is
+  actually in the export.
+- **A virtualenv prompt made the fallback reader return nothing.** Without
+  shell integration commands are read off the screen, and the patterns did not
+  allow for the parenthesised name a virtualenv, conda env or toolbox puts in
+  front of the prompt - so `(venv) user@host:~$` matched nothing and the whole
+  session exported empty. Prompts with no path in them are recognised now too.
+- **The state tree was not as private as documented.** The tree itself is
+  0700, but the recording directories inside it were left to the umask
+  (`drwxr-xr-x`) and `notes.jsonl` was created world-readable (`-rw-r--r--`)
+  while the pane logs beside it were 0600. Everything holding raw terminal
+  output or your own notes is owner-only now.
+- **A narrow tmux pane was replayed at the wrong width.** The replay floored
+  the terminal width at twenty columns, so a split pane narrower than that had
+  its wrap column shifted and a `\r` returned to the wrong row - the same
+  failure as an unfollowed resize. Only a width of zero now falls back to the
+  default. Replays at twenty columns and wider are byte-for-byte unchanged.
+- **The injected `note` helper replaced one of your own, under zsh.** The
+  check used `$+commands`, which sees only external commands, so a `note`
+  function or alias you had defined was silently shadowed for the length of
+  every recording. bash, which used `command -v`, was already correct; zsh now
+  does the same.
+- **The bash hooks took over a `DEBUG` trap you already had.** bash has no
+  preexec hook, so shell integrations ride that trap - bash-preexec, Atuin and
+  others - and installing ours over it broke them for the length of every
+  recording. `PROMPT_COMMAND`, set two lines earlier, was already being
+  preserved; the trap now is too, and runs first.
+- **`attach` never finished a session.** Only `rec` closed a recording, so
+  leaving the first tab before the attached one left no panes, no export and
+  a `current.json` still claiming to be live — the whole recording was lost.
+  Both commands now share one release path, and the last pane out finishes
+  the session, as the README always said it did.
+- **A command run twice was exported once.** Deduplication collapsed any two
+  consecutive identical steps. That artifact belongs to the heuristic reader,
+  which reads a redrawn prompt twice; a pair of markers is proof the command
+  really ran, so `id` typed twice is now two steps. `list` and the export
+  agree again.
+- **Timestamps were lost on BSD and in non-English locales.** `date +%s.%N` is
+  a GNU extension — BSD `date` prints a literal `N` — and bash formats
+  `EPOCHREALTIME` with the locale's decimal point. Either produced a string
+  `float()` refused, costing the recording every duration and all cross-pane
+  ordering. The hooks now emit a portable timestamp and the parser tolerates
+  both forms.
+- **Elapsed time was wrong for anything but a fresh recording.** The end of a
+  session defaulted to the moment of the export, so exporting last week's
+  recording reported an elapsed time of days. It is now taken from the last
+  thing that actually happened in the session.
+- **Table borders were destroyed as ASCII art.** A single art-heavy line was
+  replaced with a `<SNIP>` marker, gutting every `mysql`, `psql` and
+  `column -t` table. A banner now needs at least two such lines in a row.
+- **`cat`ting a markdown file broke the export.** Output containing a ```` ```
+  ```` fence closed the generated `console` block early; the fence is now
+  sized to the content. A command containing backticks likewise broke its
+  own heading.
+- **Merging lost steps after an embedded end marker.** A recording that `cat`s
+  an older sectape export captures `<!-- sectape:end -->` as ordinary output,
+  and merging split on that copy — silently truncating the document there.
+- **Double-width characters were counted as one column.** CJK and emoji are
+  two columns wide and combining marks are none, so any prompt containing one
+  put every following cursor move in the wrong place. The replayer now tracks
+  real screen columns. Raw C1 control bytes no longer reach the export either.
+- **Filesystem errors ended in a traceback.** A read-only output directory, a
+  full disk, or `-o` pointing at a directory now produce a clean message that
+  names the file you asked for rather than the internal temporary one.
+- **`--config` pointing at a missing file was ignored**, silently falling back
+  to the defaults. A config you name on the command line must exist.
+- **A re-export kept the first run's summary forever.** The derived counts sat
+  outside the regenerated block, so exporting a session twice left a header
+  reading "Commands: 1" above a body listing four, and stale YAML frontmatter
+  to match. The summary now lives inside the block, the frontmatter is
+  refreshed on merge, and prose you added around it is still preserved.
+- **Notes were never redacted.** The transcript was scrubbed of high-confidence
+  secrets before export but annotations were not, so a token pasted into
+  `sectape note` reached the shared document verbatim. As with the transcript,
+  only the export is scrubbed; `notes.jsonl` keeps what you wrote.
+- **A recording of nothing but notes exported as empty.** The markdown writer
+  listed "Notes: 1" and then printed "No commands were captured in this
+  session", dropping them. The other three writers already kept them.
+- **A filtered export overwrote the complete one.** `sectape export --only-failed`
+  wrote its subset to the recording's own file, replacing a four-command
+  document with a one-command document and saying nothing. A narrowed export
+  now gets its own name - `lab (failed).md`, `lab (last 20).md` - and `-o`
+  still puts it wherever you ask.
+- **A mistyped config value corrupted exports or crashed.** `patterns = "oops"`
+  under `[redaction]` was read as one regex per character, so every `o`, `p`
+  and `s` in the export became `<REDACTED>` with no warning; a non-numeric
+  `max_output_lines` escaped as a raw traceback; and `redact = "no"` silently
+  meant the opposite, because a non-empty string is truthy. Every value is now
+  type-checked and reported against the key it came from.
+- **`list` columns did not line up.** Padding counted characters, so a
+  recording named in Japanese or with an emoji in it pushed every column after
+  it out of place - and the header was two columns off even for plain ASCII.
+  The header and every row are now built from one template, measured in screen
+  columns.
+- Counts in messages are pluralised properly (`1 pane`, not `1 pane(s)`).
+
+### Changed
+
+- **Notes are held to the same size limits as command output.** Output has
+  always been trimmed for readability; notes were not, so
+  `cat big.log | sectape note` put the whole file into every export - 849 KB
+  of text that the same limits would have cut to 12 KB as command output. The
+  document is bounded and says how much it left out; `notes.jsonl` still keeps
+  the note in full.
+
+- **Exports follow your umask.** Atomic writes go through `mkstemp`, which
+  always creates 0600, so the documents the tool exists to produce came out
+  unshareable even though the output directory is documented as being left to
+  the umask. A new export now gets the permissions a plain `open()` would have
+  given it, and re-exporting keeps whatever permissions the file already had.
+  The state tree is unaffected and stays owner-only.
+
+- **`list` shows a real command count for far more recordings.** Counting had
+  one size threshold for two paths that differ by roughly forty times in cost:
+  a log with shell-integration markers only needs a regex sweep (24 MB in about
+  0.2s), while one without has to be replayed and read off the screen. The two
+  now have their own ceilings, so large marked sessions are counted instead of
+  showing `?`, and the slow path is capped lower than it was - better on both
+  counts.
+
+- **The VT replay is roughly a hundred times faster.** Each character was
+  rebuilt into a fresh string, which made a single long line quadratic;
+  rows are now cells, and a run of ordinary characters is appended in one
+  step. Ordinary output went from 0.2 MB/s to about 20 MB/s, so exporting a
+  session that `cat`ted something large is seconds rather than minutes. The
+  new implementation was checked against the old one over 16,000 renders of
+  random terminal input, byte for byte.
+
+### Added
+
+- `list` shows a recording's own name rather than its directory slug, and
+  `list --json` carries both. A label with no ASCII in it slugs to a digest,
+  which told the reader nothing; the name shown is still accepted by `show`,
+  `export` and `rm`.
+
+- `doctor` and `config show` report config keys sectape does not recognise. A
+  misspelled `fromat = "json"` was simply not read, leaving the default format
+  with nothing to show for it.
+
+### Internal
+
+- The test suite no longer fails for anyone with `SECTAPE_*` exported in their
+  own shell — which is to say, for anyone who uses the tool.
+- `unittest.main()` sat in the middle of `tests/test_record.py`, so running
+  that file directly never reached the bash end-to-end suite.
+- `write_json_atomic` and `write_text_atomic` are one helper.
+- Removed the vestigial `backups/` directory. It was created inside every
+  state directory on every run and never written to, so each user had an empty
+  directory for a feature that does not exist. Existing ones can be deleted.
+- The shipped completion scripts are checked: both must parse under `zsh -n` /
+  `bash -n`, and both must offer exactly the commands the parser defines, so a
+  new command cannot quietly stop being completable.
+- `ui.py` has tests: no escape sequence may reach a pipe, `NO_COLOR` and
+  `SECTAPE_COLOR` are honoured, and glyphs fall back to ASCII off a UTF-8
+  terminal.
+- Removed section banners left behind by an earlier refactor: they announced a
+  webhook receiver, a VT emulator, session state and redaction in modules that
+  hold none of those, and documented the marker payload under the tool's
+  previous name. The marker wire format now sits with the markers.
+- The replayer has property tests over random terminal input: it must never
+  raise, must never leak a control character into a document, must be
+  deterministic, and must never pad a row past the terminal width.
+
 ## 4.1.0
 
 ### Fixed

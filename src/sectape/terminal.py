@@ -12,9 +12,30 @@ import re
 import struct
 import sys
 import termios
+import unicodedata
 
 
 CSI_RE = re.compile(r"[0-?]*[ -/]*[@-~]")
+
+# A run of printable characters that are all exactly one column wide: no
+# controls, no DEL, no C1, nothing combining or double-width. These can be
+# appended to the current row wholesale instead of one at a time.
+PLAIN_RUN_RE = re.compile(r"[\x20-\x7e\xa0-\u02ff]+")
+
+
+def char_width(ch: str) -> int:
+    """Columns a character occupies on screen: 0, 1 or 2.
+
+    CJK and emoji are two columns wide, and combining marks are none. Counting
+    every character as one put the cursor in the wrong place for the rest of
+    the line whenever a prompt contained an emoji, because the shell computes
+    its cursor moves in real columns.
+    """
+    if ch < "\u0300":                    # ASCII and Latin-1: always one column
+        return 1
+    if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
 
 
 class VTScreen:
@@ -30,9 +51,16 @@ class VTScreen:
     TABSTOP = 8
     DEFAULT_WIDTH = 80
 
+    # A real terminal can be very narrow - a split tmux pane easily is - and
+    # replaying one at a wider column than it had puts every wrap and every
+    # carriage return in the wrong place. Only nonsense is refused.
+    MIN_WIDTH = 1
+
     def __init__(self, width: int = DEFAULT_WIDTH) -> None:
-        self.width = max(20, int(width or self.DEFAULT_WIDTH))
-        self.lines: list[str] = [""]
+        self.width = max(self.MIN_WIDTH, int(width or self.DEFAULT_WIDTH))
+        # One entry per screen column. A double-width character owns two: the
+        # character itself and an empty continuation cell.
+        self.lines: list[list[str]] = [[]]
         self.wrap: list[bool] = [False]
         self.row = 0
         self.col = 0
@@ -42,45 +70,81 @@ class VTScreen:
         self._stash = None
 
     def resize(self, width: int) -> None:
-        if width and int(width) >= 20:
+        if width and int(width) >= self.MIN_WIDTH:
             self.width = int(width)
 
     # -- internals ---------------------------------------------------------
     def _ensure_row(self) -> None:
         while len(self.lines) <= self.row:
-            self.lines.append("")
+            self.lines.append([])
             self.wrap.append(False)
 
+    @staticmethod
+    def _break_wide(row: list[str], col: int) -> None:
+        """Blank a double-width character that `col` lands in the middle of.
+
+        Overwriting half of one leaves the other half behind; a real terminal
+        erases both cells.
+        """
+        if 0 <= col < len(row):
+            if row[col] == "" and col > 0:
+                row[col - 1] = " "
+                row[col] = " "
+
     def _put(self, ch: str) -> None:
-        if self.col >= self.width:                 # deferred autowrap
+        # Almost every character is a plain one landing at the end of the
+        # current row, and the general path below spends most of its time
+        # proving that. Recognising it directly is what keeps a multi-megabyte
+        # capture to seconds rather than minutes.
+        if ch < "\u0300" and self.col < self.width and self.row < len(self.lines):
+            row = self.lines[self.row]
+            if self.col == len(row):
+                row.append(ch)
+                self.col += 1
+                return
+
+        width = char_width(ch)
+        if width == 0:                             # combining mark
+            self._ensure_row()
+            row = self.lines[self.row]
+            if 0 < self.col <= len(row) and row[self.col - 1]:
+                row[self.col - 1] += ch
+            return
+        if self.col + width > self.width:          # deferred autowrap
             self._ensure_row()
             self.wrap[self.row] = True
             self.row += 1
             self.col = 0
         self._ensure_row()
-        line = self.lines[self.row]
-        if len(line) < self.col:
-            line += " " * (self.col - len(line))
-        self.lines[self.row] = line[: self.col] + ch + line[self.col + 1 :]
-        self.col += 1
+        row = self.lines[self.row]
+        while len(row) < self.col + width:
+            row.append(" ")
+        self._break_wide(row, self.col)
+        self._break_wide(row, self.col + width)
+        row[self.col] = ch
+        for offset in range(1, width):
+            row[self.col + offset] = ""
+        self.col += width
 
     def _erase_line(self, mode: int) -> None:
         self._ensure_row()
-        line = self.lines[self.row]
+        row = self.lines[self.row]
         if mode == 0:
-            self.lines[self.row] = line[: self.col]
+            self._break_wide(row, self.col)
+            del row[self.col:]
             self.wrap[self.row] = False
         elif mode == 1:
-            keep = line[self.col + 1 :] if len(line) > self.col else ""
-            self.lines[self.row] = " " * min(self.col + 1, len(line)) + keep
+            self._break_wide(row, self.col + 1)
+            count = min(self.col + 1, len(row))
+            row[:count] = [" "] * count
         elif mode == 2:
-            self.lines[self.row] = ""
+            row.clear()
             self.wrap[self.row] = False
 
     def _new_region(self) -> None:
         """`clear`/reset: keep the transcript, start addressing fresh below."""
-        if self.lines and self.lines[-1] != "":
-            self.lines.append("")
+        if self.lines and self.lines[-1]:
+            self.lines.append([])
             self.wrap.append(False)
         self.top = len(self.lines) - 1
         self.row = self.top
@@ -90,7 +154,7 @@ class VTScreen:
     def _erase_display(self, mode: int) -> None:
         if mode in (2, 3):
             if self.alt:
-                self.lines, self.wrap = [""], [False]
+                self.lines, self.wrap = [[]], [False]
                 self.row = self.col = self.top = 0
             else:
                 self._new_region()
@@ -105,7 +169,7 @@ class VTScreen:
         if self.alt:
             return
         self._stash = (self.lines, self.wrap, self.row, self.col, self.top)
-        self.lines, self.wrap = [""], [False]
+        self.lines, self.wrap = [[]], [False]
         self.row = self.col = self.top = 0
         self.alt = True
 
@@ -175,22 +239,28 @@ class VTScreen:
             self._erase_line(n)
         elif final == "X":                          # erase n chars
             self._ensure_row()
-            line = self.lines[self.row]
-            cnt = max(1, n)
-            if len(line) > self.col:
-                self.lines[self.row] = line[: self.col] + " " * cnt + line[self.col + cnt :]
+            row = self.lines[self.row]
+            count = max(1, n)
+            if len(row) > self.col:
+                self._break_wide(row, self.col)
+                self._break_wide(row, self.col + count)
+                row[self.col:self.col + count] = [" "] * count
         elif final == "P":                          # delete n chars
             self._ensure_row()
-            line = self.lines[self.row]
-            self.lines[self.row] = line[: self.col] + line[self.col + max(1, n) :]
+            row = self.lines[self.row]
+            count = max(1, n)
+            self._break_wide(row, self.col)
+            self._break_wide(row, self.col + count)
+            del row[self.col:self.col + count]
         elif final == "@":                          # insert n blanks
             self._ensure_row()
-            line = self.lines[self.row]
-            self.lines[self.row] = line[: self.col] + " " * max(1, n) + line[self.col :]
+            row = self.lines[self.row]
+            self._break_wide(row, self.col)
+            row[self.col:self.col] = [" "] * max(1, n)
         elif final == "L":                          # insert lines
             self._ensure_row()
             for _ in range(max(1, n)):
-                self.lines.insert(self.row, "")
+                self.lines.insert(self.row, [])
                 self.wrap.insert(self.row, False)
         elif final == "M":                          # delete lines
             self._ensure_row()
@@ -245,6 +315,23 @@ class VTScreen:
                 i += 2
                 continue
 
+            if " " <= ch < "\u0300" and ch != "\x7f" and self.row < len(self.lines):
+                # Bulk-append the whole run of plain characters when it lands
+                # at the end of the row, which is the overwhelmingly common
+                # case. Falls through to _put for anything else.
+                row = self.lines[self.row]
+                if self.col == len(row) and self.col < self.width:
+                    # Bounded by the room left on the row: matching the whole
+                    # remaining run and then slicing it made one very long
+                    # line quadratic.
+                    run = PLAIN_RUN_RE.match(data, i, i + self.width - self.col)
+                    if run:
+                        chunk = run.group(0)
+                        row.extend(chunk)
+                        self.col += len(chunk)
+                        i += len(chunk)
+                        continue
+
             if ch == "\r":
                 self.col = 0
             elif ch in ("\n", "\x0b", "\x0c"):
@@ -255,7 +342,9 @@ class VTScreen:
             elif ch == "\t":
                 self.col = min(self.width - 1,
                                ((self.col // self.TABSTOP) + 1) * self.TABSTOP)
-            elif ch < " ":
+            elif ch < " " or "\x80" <= ch <= "\x9f":
+                # C1 controls are controls, not text. Printing them put raw
+                # control bytes into the export.
                 pass
             else:
                 self._put(ch)
@@ -263,9 +352,18 @@ class VTScreen:
         return self
 
     def to_text(self) -> str:
+        lines, wrap = self.lines, self.wrap
+        if self.alt and self._stash is not None:
+            # The capture ended with the alternate screen still up: a
+            # full-screen program was killed, or the recording was stopped
+            # from another tab while `less` was open. The real transcript is
+            # the stashed one - keeping the redrawn screen instead threw the
+            # whole session away and left a picture of vim.
+            lines, wrap = self._stash[0], self._stash[1]
         out, buf = [], ""
-        for i, line in enumerate(self.lines):
-            if i < len(self.wrap) and self.wrap[i]:
+        for i, cells in enumerate(lines):
+            line = "".join(cells)
+            if i < len(wrap) and wrap[i]:
                 buf += line
             else:
                 out.append((buf + line).rstrip())
@@ -280,29 +378,24 @@ def render(data: str, width: int = VTScreen.DEFAULT_WIDTH) -> str:
     return VTScreen(width).feed(data).to_text()
 
 
-# --------------------------------------------------------------------------
-# Shell integration markers
-# --------------------------------------------------------------------------
-# Private OSC 7337. Terminals ignore OSC codes they don't know, so these are
-# invisible to the user while the session is live and are stripped by the VT
-# emulator on replay.
-#   begin: ESC ] 7337 ; THM ; b | <b64 command> | <epoch>            BEL
-#   end:   ESC ] 7337 ; THM ; e | <exit code> | <epoch> | <b64 cwd>  BEL
-#   size:  ESC ] 7337 ; THM ; w | <cols> | <rows>                    BEL
-# The size marker is written straight into the log file, never to the tty.
-
-
 # Everything a misbehaving full-screen program might have left switched on.
+#
+# DECSC/DECRC (ESC 7 / ESC 8) wrap the whole thing on purpose: resetting the
+# scroll region with CSI r homes the cursor to row 1 column 1, so without the
+# save/restore the next thing printed lands at the top of the screen, on top of
+# whatever was already there.
 TERMINAL_RESET = (
-    "\x1b[?1049l"                                   # leave alternate screen
-    "\x1b[?1000l\x1b[?1002l\x1b[?1003l"             # mouse reporting off
-    "\x1b[?1005l\x1b[?1006l\x1b[?1015l"             # extended mouse off
-    "\x1b[?2004l"                                   # bracketed paste off
-    "\x1b[?7h"                                      # autowrap on
-    "\x1b[?25h"                                     # cursor visible
-    "\x1b[?1l\x1b>"                                 # normal cursor keys + keypad
-    "\x1b[r"                                        # full scroll region
-    "\x1b[m"                                        # reset colours/attributes
+    "\x1b7"                                          # save cursor
+    "\x1b[?1049l"                                    # leave alternate screen
+    "\x1b[?1000l\x1b[?1002l\x1b[?1003l"              # mouse reporting off
+    "\x1b[?1005l\x1b[?1006l\x1b[?1015l"              # extended mouse off
+    "\x1b[?2004l"                                    # bracketed paste off
+    "\x1b[?7h"                                       # autowrap on
+    "\x1b[?25h"                                      # cursor visible
+    "\x1b[?1l\x1b>"                                  # normal cursor keys + keypad
+    "\x1b[r"                                         # full scroll region (homes!)
+    "\x1b[m"                                         # reset colours/attributes
+    "\x1b8"                                          # put the cursor back
 )
 
 

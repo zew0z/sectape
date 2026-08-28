@@ -67,10 +67,6 @@ class Settings:
     def lock_file(self) -> Path:
         return self.state_dir / ".lock"
 
-    @property
-    def backup_dir(self) -> Path:
-        return self.state_dir / "backups"
-
 
 settings = Settings()
 
@@ -84,31 +80,61 @@ def _from_file(path: Path) -> dict:
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}") from exc
 
-    general = raw.get("general", {})
-    output = raw.get("output", {})
-    redaction = raw.get("redaction", {})
+    def wrong(key: str, want: str):
+        raise ConfigError(f"{path}: {key} must be {want}")
+
+    def table(name: str) -> dict:
+        section = raw.get(name, {})
+        if not isinstance(section, dict):
+            wrong(f"[{name}]", "a section")
+        return section
+
+    general = table("general")
+    output = table("output")
+    redaction = table("redaction")
     values: dict = {}
 
+    def text(section: dict, name: str, key: str):
+        if not isinstance(section[name], str):
+            wrong(key, "a string")
+        return section[name]
+
     if "patterns" in redaction:
-        values["redact_patterns"] = tuple(str(x) for x in redaction["patterns"])
+        patterns = redaction["patterns"]
+        # A bare string here is iterable, so it used to be read as one regex
+        # per character - every `o`, `p` and `s` in the export replaced with
+        # <REDACTED>, silently.
+        if not isinstance(patterns, list) or not all(
+                isinstance(x, str) for x in patterns):
+            wrong("redaction.patterns",
+                  'a list of strings, e.g. patterns = ["CORP-[0-9]{6}"]')
+        values["redact_patterns"] = tuple(patterns)
     if "replacement" in redaction:
-        values["redact_replacement"] = str(redaction["replacement"])
+        values["redact_replacement"] = text(redaction, "replacement",
+                                            "redaction.replacement")
 
     if "state_dir" in general:
-        values["state_dir"] = _expand(general["state_dir"])
+        values["state_dir"] = _expand(text(general, "state_dir",
+                                           "general.state_dir"))
     if "prompt" in general:
-        values["prompt"] = str(general["prompt"])
+        values["prompt"] = text(general, "prompt", "general.prompt")
     for key in ("redact", "shell_integration"):
         if key in general:
-            values[key] = bool(general[key])
+            if not isinstance(general[key], bool):
+                wrong(f"general.{key}", "true or false")
+            values[key] = general[key]
 
     if "dir" in output:
-        values["output_dir"] = _expand(output["dir"])
+        values["output_dir"] = _expand(text(output, "dir", "output.dir"))
     if "format" in output:
-        values["format"] = str(output["format"])
+        values["format"] = text(output, "format", "output.format")
     for key in ("max_output_lines", "max_output_chars"):
         if key in output:
-            values[key] = int(output[key])
+            # bool is an int subclass, and `max_output_lines = true` is not a
+            # limit. A non-number used to escape as a raw ValueError.
+            if isinstance(output[key], bool) or not isinstance(output[key], int):
+                wrong(f"output.{key}", "a whole number")
+            values[key] = output[key]
     return values
 
 
@@ -127,6 +153,37 @@ def _from_env() -> dict:
     if (v := _env("SECTAPE_SHELL_INTEGRATION")) is not None:
         values["shell_integration"] = _flag(v)
     return values
+
+
+# What each section of the config file may contain, for reporting typos.
+KNOWN_KEYS = {
+    "general": {"state_dir", "prompt", "redact", "shell_integration"},
+    "output": {"dir", "format", "max_output_lines", "max_output_chars"},
+    "redaction": {"patterns", "replacement"},
+}
+
+
+def unknown_keys(path: Path | None = None) -> list[str]:
+    """Anything in the config file that sectape does not understand.
+
+    A misspelled key is simply not read, so `fromat = "json"` quietly left the
+    format at its default with nothing to show for it. `doctor` reports these.
+    """
+    chosen = Path(path) if path else config_path()
+    try:
+        with open(chosen, "rb") as fh:
+            raw = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    found: list[str] = []
+    for section, table in raw.items():
+        if section not in KNOWN_KEYS:
+            found.append(f"[{section}]")
+            continue
+        if isinstance(table, dict):
+            found += [f"{section}.{key}" for key in table
+                      if key not in KNOWN_KEYS[section]]
+    return sorted(found)
 
 
 def config_path() -> Path:
@@ -175,7 +232,7 @@ def override(**values) -> Settings:
 def ensure_dirs() -> None:
     # The state tree holds raw terminal logs, so keep it owner-only. The output
     # directory is for documents you will share, and is left to your umask.
-    for directory in (settings.state_dir, settings.sessions_dir, settings.backup_dir):
+    for directory in (settings.state_dir, settings.sessions_dir):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             directory.chmod(0o700)

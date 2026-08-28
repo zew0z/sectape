@@ -4,6 +4,7 @@ import unittest
 from sectape import config
 from sectape.formats import Recording, to_html, to_json, to_markdown, to_text
 from sectape.session import add_note, read_notes
+from sectape.text import trim_for_export
 from sectape.transcript import Step
 from sectape.util import write_json_atomic
 from tests.helpers import TempConfig
@@ -116,11 +117,11 @@ class TestNotesInExports(TempConfig):
 
 class TestPaneAttribution(TempConfig):
     def test_pane_shown_only_when_several(self):
-        step = Step(cmd="ls", output="", exit_code=0, started=1.0, pane="007")
+        step = Step(cmd="ls", output="", exit_code=0, started=1.0, pane="07")
         single = Recording("r", [step], panes=1)
         multi = Recording("r", [step], panes=2)
-        self.assertNotIn("pane 007", to_markdown(single))
-        self.assertIn("pane 007", to_markdown(multi))
+        self.assertNotIn("pane 7", to_markdown(single))
+        self.assertIn("pane 7", to_markdown(multi))
 
     def test_collect_steps_records_the_pane(self):
         from sectape.transcript import collect_steps
@@ -130,6 +131,104 @@ class TestPaneAttribution(TempConfig):
         (d / "pane_42.raw").write_text(begin("ls", 1.0) + "a\r\n" + end(0, 1.1))
         steps, _ = collect_steps(d)
         self.assertEqual(steps[0].pane, "42")
+
+
+class TestNotesAreRedactedInExports(TempConfig):
+    """A note lands in the same shared document as the transcript."""
+
+    SECRET = "AKIAIOSFODNN7EXAMPLE"
+
+    def load(self, session_dir):
+        from sectape.cli import _load_recording
+        return _load_recording(session_dir)
+
+    def setUp(self):
+        super().setUp()
+        self.dir = self.make_session("secrets")
+        add_note(f"reminder: the key is {self.SECRET}", self.dir, when=1700000000.0)
+
+    def test_the_secret_is_scrubbed_from_the_export(self):
+        text = to_markdown(self.load(self.dir))
+        self.assertNotIn(self.SECRET, text)
+        self.assertIn("<REDACTED: aws key id>", text)
+
+    def test_the_notes_file_itself_is_untouched(self):
+        # Redaction applies to exports, not to the raw record.
+        self.assertIn(self.SECRET, (self.dir / "notes.jsonl").read_text())
+
+    def test_no_redact_keeps_the_note_verbatim(self):
+        config.override(redact=False)
+        self.assertIn(self.SECRET, to_markdown(self.load(self.dir)))
+
+    def test_every_writer_scrubs_it(self):
+        rec = self.load(self.dir)
+        for name, writer in (("markdown", to_markdown), ("text", to_text),
+                             ("html", to_html), ("json", to_json)):
+            self.assertNotIn(self.SECRET, writer(rec), name)
+
+
+class TestLargeNotesAreBoundedInExports(TempConfig):
+    """`cat big.log | sectape note` must not make the document unusable."""
+
+    def load(self, session_dir):
+        from sectape.cli import _load_recording
+        return _load_recording(session_dir)
+
+    def setUp(self):
+        super().setUp()
+        self.dir = self.make_session("huge")
+        self.huge = "\n".join(f"log line {i} padding" for i in range(20000))
+        add_note(self.huge, self.dir, when=1700000000.0)
+        add_note("a short note", self.dir, when=1700000001.0)
+
+    def test_the_export_is_bounded(self):
+        text = to_markdown(self.load(self.dir))
+        self.assertLess(len(text), 60000, "the whole file went into the export")
+        self.assertIn("SNIP", text, "the export does not say what it left out")
+
+    def test_every_writer_bounds_it(self):
+        rec = self.load(self.dir)
+        for name, writer in (("markdown", to_markdown), ("text", to_text),
+                             ("html", to_html), ("json", to_json)):
+            self.assertLess(len(writer(rec)), 60000, name)
+
+    def test_a_short_note_is_untouched(self):
+        self.assertIn("a short note", to_markdown(self.load(self.dir)))
+
+    def test_the_notes_file_keeps_the_note_in_full(self):
+        # Trimming is a property of the document, not of the record.
+        raw = (self.dir / "notes.jsonl").read_text()
+        self.assertGreater(len(raw), len(self.huge))
+        self.assertEqual(len(read_notes(self.dir)), 2)
+        self.assertEqual(read_notes(self.dir)[0]["text"], self.huge)
+
+    def test_the_limits_are_the_configured_ones(self):
+        config.override(max_output_lines=5, max_output_chars=400)
+        text = to_markdown(self.load(self.dir))
+        self.assertLess(len(text), 2000)
+
+
+class TestTrimForExport(TempConfig):
+    def test_short_text_is_returned_unchanged(self):
+        self.assertEqual(trim_for_export("one\ntwo"), "one\ntwo")
+
+    def test_empty_text(self):
+        self.assertEqual(trim_for_export(""), "")
+
+    def test_lines_are_capped_with_a_head_and_a_tail(self):
+        text = "\n".join(str(i) for i in range(1000))
+        out = trim_for_export(text, max_lines=10, max_chars=100000)
+        self.assertIn("<SNIP: 990 more lines>", out)
+        self.assertTrue(out.startswith("0\n"))
+        self.assertTrue(out.endswith("999"))
+
+    def test_characters_are_capped(self):
+        out = trim_for_export("x" * 5000, max_lines=1000, max_chars=100)
+        self.assertLess(len(out), 200)
+        self.assertIn("truncated at 100 chars", out)
+
+    def test_carriage_returns_are_normalised(self):
+        self.assertEqual(trim_for_export("a\r\nb\rc"), "a\nb\nc")
 
 
 if __name__ == "__main__":

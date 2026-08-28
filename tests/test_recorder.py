@@ -5,7 +5,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from sectape.recorder import prepare_shell, write_all
+from sectape.recorder import prepare_shell, self_invocation, write_all
 
 
 class TestWriteAll(unittest.TestCase):
@@ -104,6 +104,62 @@ class TestPrepareShell(unittest.TestCase):
         shell, name, wrapper = self.prepare(SECTAPE_SHELL="/bin/ksh")
         self.assertEqual(name, "ksh")
         self.assertIsNone(wrapper)
+
+
+class TestSelfInvocation(unittest.TestCase):
+    """How the injected `note` helper calls sectape back.
+
+    Kept as (executable, extra words) rather than one string so the shell
+    function needs no eval, which would mangle arguments containing spaces.
+    """
+
+    def setUp(self):
+        import sys
+        import tempfile
+        self.saved = list(sys.argv)
+        self.addCleanup(lambda: sys.argv.__setitem__(slice(None), self.saved))
+        self.dir = Path(tempfile.mkdtemp(prefix="sectape-argv-"))
+        self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
+
+    def invoke(self, argv0):
+        import sys
+        sys.argv[:] = [argv0]
+        return self_invocation()
+
+    def test_an_installed_console_script_is_called_directly(self):
+        script = self.dir / "sectape"
+        script.write_text("#!/bin/sh\n", encoding="utf-8")
+        script.chmod(0o755)
+        binary, extra = self.invoke(str(script))
+        self.assertEqual(Path(binary), script.resolve())
+        self.assertEqual(extra, "")
+
+    def test_a_versioned_script_name_still_counts(self):
+        script = self.dir / "sectape3"
+        script.write_text("#!/bin/sh\n", encoding="utf-8")
+        binary, extra = self.invoke(str(script))
+        self.assertEqual(Path(binary), script.resolve())
+        self.assertEqual(extra, "")
+
+    def test_module_execution_falls_back_to_the_interpreter(self):
+        import sys
+        binary, extra = self.invoke(str(self.dir / "__main__.py"))
+        self.assertEqual(binary, sys.executable)
+        self.assertEqual(extra, "-m sectape")
+
+    def test_a_name_that_is_not_sectape_falls_back(self):
+        import sys
+        other = self.dir / "something-else"
+        other.write_text("#!/bin/sh\n", encoding="utf-8")
+        binary, extra = self.invoke(str(other))
+        self.assertEqual(binary, sys.executable)
+        self.assertEqual(extra, "-m sectape")
+
+    def test_an_empty_argv_falls_back(self):
+        import sys
+        binary, extra = self.invoke("")
+        self.assertEqual(binary, sys.executable)
+        self.assertEqual(extra, "-m sectape")
 
 
 if __name__ == "__main__":
