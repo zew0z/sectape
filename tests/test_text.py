@@ -1,0 +1,114 @@
+import unittest
+
+from sectape import config
+from sectape.text import base_command, clean_terminal_output, redact
+from tests.helpers import TempConfig
+
+
+class TestBaseCommand(unittest.TestCase):
+    def test_plain(self):
+        self.assertEqual(base_command("nmap -sV 10.10.1.1"), "nmap")
+
+    def test_sudo_and_env_prefixes(self):
+        self.assertEqual(base_command("sudo nmap -sS x"), "nmap")
+        self.assertEqual(base_command("sudo -u root nano f"), "nano")
+        self.assertEqual(base_command("FOO=bar time curl x"), "curl")
+
+    def test_absolute_path(self):
+        self.assertEqual(base_command("/usr/bin/gobuster dir"), "gobuster")
+
+    def test_script_invocations_kept(self):
+        self.assertEqual(base_command("./deploy.sh"), "deploy.sh")
+        self.assertEqual(base_command("python3 exploit.py"), "python3")
+
+    def test_pasted_url_is_not_a_program(self):
+        self.assertEqual(base_command("http://10.1.1.1/uploads/shell.php"), "")
+        self.assertEqual(base_command("https://x.test/a?b=c"), "")
+
+    def test_url_as_argument_is_fine(self):
+        self.assertEqual(base_command("curl http://10.1.1.1/x"), "curl")
+
+    def test_empty(self):
+        self.assertEqual(base_command(""), "")
+        self.assertEqual(base_command("   "), "")
+
+
+class TestRedaction(unittest.TestCase):
+    def test_private_key_block(self):
+        text = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----"
+        self.assertNotIn("AAAA", redact(text))
+
+    def test_bearer_token(self):
+        self.assertIn("<REDACTED>", redact("Authorization: Bearer abc.def.ghi"))
+
+    def test_closing_quote_survives(self):
+        out = redact("echo 'Authorization: Bearer abc.def.ghi'")
+        self.assertTrue(out.endswith("'"), out)
+
+    def test_cloud_and_vcs_tokens(self):
+        self.assertNotIn("AKIAIOSFODNN7EXAMPLE", redact("id AKIAIOSFODNN7EXAMPLE"))
+        self.assertNotIn("ghp_", redact("ghp_" + "a" * 30))
+        self.assertNotIn("xoxb-", redact("xoxb-" + "1" * 20))
+
+    def test_ordinary_content_untouched(self):
+        for keep in ("hydra -l bob -P rockyou.txt ssh://10.10.1.1",
+                     "password: hunter2", "root:toor", "git commit -m 'key fix'"):
+            self.assertEqual(redact(keep), keep)
+
+    def test_disabled(self):
+        s = "Authorization: Bearer abc.def.ghi"
+        self.assertEqual(redact(s, enabled=False), s)
+
+
+class TestCleaning(TempConfig):
+    def test_ascii_banner_snipped(self):
+        banner = "\n".join(["/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\"] * 5)
+        out = clean_terminal_output(banner + "\nreal output")
+        self.assertIn("<SNIP: ASCII-art banner>", out)
+        self.assertIn("real output", out)
+        self.assertEqual(out.count("<SNIP: ASCII-art banner>"), 1)
+
+    def test_long_line_snipped(self):
+        out = clean_terminal_output("x" * 500)
+        self.assertIn("<SNIP: line over 300 chars>", out)
+        self.assertLess(len(out), 350)
+
+    def test_many_lines_snipped_but_head_and_tail_kept(self):
+        out = clean_terminal_output("\n".join(f"line{i}" for i in range(1000)))
+        self.assertIn("line0", out)
+        self.assertIn("line999", out)
+        self.assertIn("more lines", out)
+
+    def test_limits_come_from_configuration(self):
+        config.override(max_output_lines=5)
+        out = clean_terminal_output("\n".join(f"line{i}" for i in range(200)))
+        self.assertLessEqual(len(out.split("\n")), 6)
+        self.assertIn("line0", out)
+        self.assertIn("line199", out)
+        self.assertIn("195 more lines", out)
+
+    def test_small_limits_still_truncate(self):
+        # A head slice of max_lines-20 goes negative below 20 and used to keep
+        # the whole block.
+        for limit in (1, 2, 5, 19, 20, 21):
+            config.override(max_output_lines=limit)
+            out = clean_terminal_output("\n".join(f"l{i}" for i in range(500)))
+            # floor of 3: one head line, the snip marker, one tail line
+            self.assertLessEqual(len(out.split("\n")), max(3, limit + 1),
+                                 f"limit={limit}")
+
+    def test_char_limit_enforced(self):
+        config.override(max_output_chars=100)
+        out = clean_terminal_output("\n".join("x" * 40 for _ in range(50)))
+        self.assertLess(len(out), 200)
+        self.assertIn("truncated", out)
+
+    def test_blank_runs_collapsed(self):
+        self.assertEqual(clean_terminal_output("a\n\n\n\n\nb"), "a\n\nb")
+
+    def test_empty_input(self):
+        self.assertEqual(clean_terminal_output(""), "")
+
+
+if __name__ == "__main__":
+    unittest.main()
