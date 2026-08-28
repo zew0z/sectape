@@ -5,7 +5,8 @@ import threading
 import unittest
 from pathlib import Path
 
-from sectape.recorder import prepare_shell, self_invocation, write_all
+from sectape.recorder import (chosen_shell, integration_available,
+                              prepare_shell, self_invocation, write_all)
 
 
 class TestWriteAll(unittest.TestCase):
@@ -160,6 +161,67 @@ class TestSelfInvocation(unittest.TestCase):
         binary, extra = self.invoke("")
         self.assertEqual(binary, sys.executable)
         self.assertEqual(extra, "-m sectape")
+
+
+class TestIntegrationAvailability(unittest.TestCase):
+    """Whether hooks are really installed, which the banner reports.
+
+    It used to be answered from the command-line flag alone, so a fish or sh
+    user was told "integration on" and then handed a transcript read back off
+    the screen.
+    """
+
+    def setUp(self):
+        self.saved = {k: os.environ.get(k) for k in ("SECTAPE_SHELL", "SHELL")}
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for key, value in self.saved.items():
+            os.environ.pop(key, None)
+            if value is not None:
+                os.environ[key] = value
+
+    def set_shell(self, path):
+        os.environ["SECTAPE_SHELL"] = path
+
+    def test_supported_shells(self):
+        for shell in ("/bin/zsh", "/usr/local/bin/bash", "/opt/homebrew/bin/zsh"):
+            self.set_shell(shell)
+            self.assertTrue(integration_available(), shell)
+
+    def test_unsupported_shells(self):
+        for shell in ("/bin/fish", "/bin/sh", "/usr/bin/nu", "/bin/ksh", "/bin/tcsh"):
+            self.set_shell(shell)
+            self.assertFalse(integration_available(), shell)
+
+    def test_the_flag_turns_it_off_for_a_supported_shell(self):
+        self.set_shell("/bin/zsh")
+        self.assertFalse(integration_available(no_integration=True))
+
+    def test_it_agrees_with_what_prepare_shell_does(self):
+        # The banner and the wrapper must never disagree.
+        for shell in ("/bin/zsh", "/bin/bash", "/bin/fish", "/bin/sh"):
+            for flag in (False, True):
+                self.set_shell(shell)
+                _, _, wrapper = prepare_shell(flag)
+                try:
+                    self.assertEqual(bool(wrapper), integration_available(flag),
+                                     f"{shell} no_integration={flag}")
+                finally:
+                    if wrapper:
+                        shutil.rmtree(wrapper, ignore_errors=True)
+
+    def test_the_shell_is_chosen_from_the_environment(self):
+        os.environ.pop("SECTAPE_SHELL", None)
+        os.environ["SHELL"] = "/bin/bash"
+        self.assertEqual(chosen_shell(), ("/bin/bash", "bash"))
+        os.environ["SECTAPE_SHELL"] = "/bin/zsh"
+        self.assertEqual(chosen_shell(), ("/bin/zsh", "zsh"))
+
+    def test_it_falls_back_when_nothing_is_set(self):
+        for key in ("SECTAPE_SHELL", "SHELL"):
+            os.environ.pop(key, None)
+        self.assertEqual(chosen_shell()[1], "zsh")
 
 
 if __name__ == "__main__":

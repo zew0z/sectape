@@ -230,6 +230,49 @@ class TestRecording(unittest.TestCase):
         self.assertFalse((state / "current.json").exists(),
                          "the abandoned session was never cleared")
 
+    def banner_of(self, *argv):
+        """Start a recording, capture its banner, and stop it promptly."""
+        pid, master = self.spawn(*argv)
+        sink = []
+        try:
+            read_until(master, "integration", 25, sink)
+            # The banner is printed before the shell is exec'd, so `exit`
+            # sent straight away is swallowed by a shell that is not yet
+            # reading - and then the test waits out its own timeout.
+            time.sleep(1.0)
+            os.write(master, b"exit\n")
+            # Drain while waiting: a recorder blocked on a full pty cannot
+            # exit, and a blind sleep here made these tests take a minute.
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                done, _ = os.waitpid(pid, os.WNOHANG)
+                if done:
+                    break
+                read_until(master, None, 0.2, sink)
+            else:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        lines = [l for l in "".join(sink).split("\n") if "integration" in l]
+        return lines[0] if lines else ""
+
+    def test_the_banner_admits_when_integration_is_off(self):
+        # It used to read the command-line flag alone, so it said
+        # "integration on" for a shell whose hooks sectape cannot write, and
+        # for `shell_integration = false` in the config.
+        self.assertIn("integration on", self.banner_of("rec", "on-check"))
+        self.assertIn("integration off",
+                      self.banner_of("rec", "off-check", "--no-integration"))
+
+    def test_the_banner_says_off_for_a_shell_without_hooks(self):
+        self.env["SECTAPE_SHELL"] = shutil.which("sh") or "/bin/sh"
+        self.assertIn("integration off", self.banner_of("rec", "no-hooks"),
+                      "the banner promised hooks a plain sh cannot have")
+
     # -- the export --------------------------------------------------------
     def test_export_has_exact_commands_and_exit_codes(self):
         self.session(["echo hello-from-e2e", "false"])

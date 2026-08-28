@@ -13,7 +13,8 @@ from . import __version__, config
 from .config import ConfigError
 from .formats import WRITERS, Recording, export, filter_steps, render
 from .markers import ZSH_HOOKS
-from .recorder import record_pty
+from .recorder import (SUPPORTED_SHELLS, chosen_shell,
+                       integration_available, record_pty)
 from .session import (add_note, allocate_pane, clear_session_if_idle,
                       ensure_session_dir, live_panes, pane_label, read_notes,
                       read_session, read_session_meta, resolve_session_dir,
@@ -149,7 +150,8 @@ def cmd_rec(args) -> int:
     pane_id, pane_log = allocate_pane(session_dir)
 
     rows, cols, _, _ = current_size()
-    integration = "off" if args.no_integration else "on"
+    no_integration = args.no_integration or not config.settings.shell_integration
+    integration = "on" if integration_available(no_integration) else "off"
     lines = ["", *u.deck("rec", label)]
     lines.append(u.field("pane", f"{pane_label(pane_id)}  "
                                  f"{u.dim(u.g('dot'))} {cols}×{rows} "
@@ -162,8 +164,7 @@ def cmd_rec(args) -> int:
     lines.append("")
     banner = "\n".join(lines)
 
-    record_pty(pane_log, banner,
-               no_integration=args.no_integration or not config.settings.shell_integration)
+    record_pty(pane_log, banner, no_integration=no_integration)
 
     return _release_pane(pane_id, "stopped")
 
@@ -691,10 +692,9 @@ def cmd_doctor(args) -> int:
                         ("output dir", config.settings.output_dir)):
         check(f"{label} writable", os.access(path, os.W_OK), str(path))
 
-    shell = os.environ.get("SHELL", "")
-    check("shell supports integration",
-          os.path.basename(shell) in ("zsh", "bash"), shell or "(SHELL unset)",
-          warn_only=True)
+    shell, name = chosen_shell()
+    check("shell supports integration", name in SUPPORTED_SHELLS,
+          shell if os.environ.get("SHELL") else "(SHELL unset)", warn_only=True)
     check("integration hooks render", "_sectape_preexec" in ZSH_HOOKS.format(version=__version__))
     check("output format valid", config.settings.format in WRITERS, config.settings.format)
     if config.settings.config_path:

@@ -42,6 +42,27 @@ def write_all(fd: int, data: bytes) -> None:
         view = view[written:]
 
 
+# The only shells whose hooks sectape knows how to write.
+SUPPORTED_SHELLS = ("zsh", "bash")
+
+
+def chosen_shell() -> tuple[str, str]:
+    """The shell a recording will run, and its base name."""
+    shell = os.environ.get("SECTAPE_SHELL") or os.environ.get("SHELL") or "/bin/zsh"
+    return shell, os.path.basename(shell)
+
+
+def integration_available(no_integration: bool = False) -> bool:
+    """Whether the shell-integration hooks will really be installed.
+
+    The banner used to answer this from the command-line flag alone, so a fish
+    or sh user - and anyone with `shell_integration = false` in their config -
+    was told "integration on" and then handed a transcript read back off the
+    screen.
+    """
+    return not no_integration and chosen_shell()[1] in SUPPORTED_SHELLS
+
+
 def prepare_shell(no_integration: bool) -> tuple[str, str, Path | None]:
     """Pick the shell and build its integration wrapper.
 
@@ -49,9 +70,8 @@ def prepare_shell(no_integration: bool) -> tuple[str, str, Path | None]:
     remove it when the session ends; building it in the child leaked one
     directory per recording.
     """
-    shell = os.environ.get("SECTAPE_SHELL") or os.environ.get("SHELL") or "/bin/zsh"
-    name = os.path.basename(shell)
-    if no_integration or name not in ("zsh", "bash"):
+    shell, name = chosen_shell()
+    if not integration_available(no_integration):
         return shell, name, None
 
     wrapper = Path(tempfile.mkdtemp(prefix="sectape-shell-"))

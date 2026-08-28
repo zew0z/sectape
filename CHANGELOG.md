@@ -109,6 +109,12 @@ Behaviour an existing setup may notice. Each is described in full below.
   so a session mixing an integrated pane with one recorded without integration
   said nothing at all about the half that was less reliable. The notice now
   appears whenever any of it was, and says how much.
+- **The recording banner claimed shell integration it did not have.** It
+  answered from the `--no-integration` flag alone, so `integration on` was
+  printed for fish, sh or any shell whose hooks sectape cannot write - and for
+  `shell_integration = false` in the config or the environment. You were
+  promised exact command capture and handed a transcript read off the screen.
+  The banner and `doctor` now ask the same question the recorder does.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.
