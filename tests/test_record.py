@@ -159,6 +159,77 @@ class TestRecording(unittest.TestCase):
         self.assertIn("\x1b[?1049l", "".join(sink), "terminal not reset on SIGTERM")
         self.assertTrue(list(self.exports.glob("term.*")), "nothing exported")
 
+    def test_sighup_restores_and_still_exports(self):
+        # Closing the terminal window sends SIGHUP, which is the commonest
+        # unclean end to a recording - commoner than SIGTERM.
+        pid, master = self.spawn("rec", "hangup")
+        sink = []
+        try:
+            read_until(master, "REC", 25, sink)
+            time.sleep(1.0)
+            os.write(master, b"echo work-before-hangup\n")
+            time.sleep(0.8)
+            os.kill(pid, signal.SIGHUP)
+            read_until(master, None, 15, sink)
+            self.assertTrue(self.reap(pid, 15), "recorder did not exit on SIGHUP")
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+        self.assertIn("\x1b[?1049l", "".join(sink), "terminal not reset on SIGHUP")
+        note = self.exports / "hangup.md"
+        self.assertTrue(note.exists(),
+                        sorted(p.name for p in self.exports.iterdir()))
+        self.assertIn("work-before-hangup", note.read_text(),
+                      "the work done before the hangup was lost")
+        self.assertFalse((self.root / "state" / "current.json").exists(),
+                         "the session was left marked active")
+
+    def test_a_recording_survives_the_recorder_being_killed_outright(self):
+        # SIGKILL gives the recorder no chance to unwind, so nothing is
+        # exported at the time. The pane log is on disk, and that has to be
+        # enough to get the work back.
+        state = self.root / "state"
+        pid, master = self.spawn("rec", "killed")
+        try:
+            read_until(master, "REC", 25)
+            time.sleep(1.0)
+            os.write(master, b"echo work-before-kill\n")
+            time.sleep(0.8)
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
+        self.assertFalse((self.exports / "killed.md").exists(),
+                         "a killed recorder cannot have exported")
+        self.assertTrue(list((state / "sessions" / "killed").glob("pane_*.raw")),
+                        "the pane log did not survive")
+
+        # `status` must not claim a pane is still recording.
+        status = subprocess.run(
+            [sys.executable, "-m", "sectape", "status"],
+            env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertIn("0 live panes", status.stdout)
+        self.assertNotIn("REC", status.stdout, "a dead pane was reported as live")
+
+        # The work is recoverable by name.
+        result = subprocess.run(
+            [sys.executable, "-m", "sectape", "export", "killed"],
+            env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("work-before-kill", (self.exports / "killed.md").read_text())
+
+        # And `stop` clears the session that was left behind.
+        subprocess.run([sys.executable, "-m", "sectape", "stop"],
+                       env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertFalse((state / "current.json").exists(),
+                         "the abandoned session was never cleared")
+
     # -- the export --------------------------------------------------------
     def test_export_has_exact_commands_and_exit_codes(self):
         self.session(["echo hello-from-e2e", "false"])

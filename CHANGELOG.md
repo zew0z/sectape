@@ -229,6 +229,10 @@ Behaviour an existing setup may notice. Each is described in full below.
 - The shipped completion scripts are checked: both must parse under `zsh -n` /
   `bash -n`, and both must offer exactly the commands the parser defines, so a
   new command cannot quietly stop being completable.
+- The two unclean endings a recording actually meets have end-to-end tests:
+  SIGHUP, which is what closing the terminal window sends, and SIGKILL, after
+  which nothing is exported at the time and the pane log on disk has to be
+  enough to get the work back.
 - `ui.py` has tests: no escape sequence may reach a pipe, `NO_COLOR` and
   `SECTAPE_COLOR` are honoured, and glyphs fall back to ASCII off a UTF-8
   terminal.
