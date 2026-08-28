@@ -207,6 +207,12 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Added
 
+- The README described an `ssh` session inside a recording as falling back to
+  reading commands off the screen. It does not: the fallback is chosen per
+  pane log, and a log with markers never uses it, so the remote session is
+  kept as the output of the `ssh` command. Documented as it behaves, with
+  tests.
+
 - `list` shows a recording's own name rather than its directory slug, and
   `list --json` carries both. A label with no ASCII in it slugs to a digest,
   which told the reader nothing; the name shown is still accepted by `show`,

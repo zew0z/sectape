@@ -440,5 +440,46 @@ class TestPromptShapes(TempConfig):
             self.assertEqual([s.cmd for s in steps], ["cat f"], line)
 
 
+class TestSshInsideARecording(TempConfig):
+    """The remote shell has no hooks, so its commands are the ssh step's output.
+
+    The fallback reader is chosen per pane log: a log with any marked step
+    never uses it, so an ssh session inside an ordinary recording is not read
+    off the screen.
+    """
+
+    def capture(self) -> str:
+        return (begin("ssh admin@box", 1700000000)
+                + "Welcome to box\r\n"
+                + "admin@box:~$ whoami\r\nadmin\r\n"
+                + "admin@box:~$ cat /etc/hostname\r\nbox\r\n"
+                + "admin@box:~$ exit\r\nlogout\r\n"
+                + end(0, 1700000030)
+                + begin("echo back-home", 1700000031) + "back-home\r\n"
+                + end(0, 1700000032))
+
+    def test_the_remote_commands_are_not_separate_steps(self):
+        steps = parse_transcript(self.capture())
+        self.assertEqual([s.cmd for s in steps],
+                         ["ssh admin@box", "echo back-home"])
+
+    def test_the_remote_session_is_kept_as_output(self):
+        step = parse_transcript(self.capture())[0]
+        for expected in ("whoami", "admin", "cat /etc/hostname", "box"):
+            self.assertIn(expected, step.output)
+
+    def test_the_local_command_after_it_is_unaffected(self):
+        step = parse_transcript(self.capture())[1]
+        self.assertEqual(step.cmd, "echo back-home")
+        self.assertEqual(step.output, "back-home")
+        self.assertEqual(step.source, "marker")
+
+    def test_a_log_with_no_markers_at_all_does_use_the_screen_reader(self):
+        raw = "admin@box:~$ whoami\r\nadmin\r\n"
+        steps = parse_transcript(raw)
+        self.assertEqual([s.cmd for s in steps], ["whoami"])
+        self.assertEqual(steps[0].source, "heuristic")
+
+
 if __name__ == "__main__":
     unittest.main()

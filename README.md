@@ -120,9 +120,14 @@ alias recjoin='sectape attach'
    erases, autowrap, the alternate screen — and cut into commands at the
    markers.
 
-Sessions recorded without integration (`--no-integration`, a shell other than
-zsh/bash, an ssh session inside the recording) fall back to reading commands
-off the rendered screen, and the export says so.
+A pane recorded without integration — `--no-integration`, or a shell other than
+zsh/bash — falls back to reading commands off the rendered screen, and the
+export says so.
+
+An `ssh` session *inside* a recording is different: the outer shell still has
+its hooks, so the pane is read from the markers as usual and everything you did
+on the remote box appears as the output of the `ssh` command. The remote shell
+has no hooks of its own, so its commands are not separate steps.
 
 zsh uses `preexec`/`precmd`. bash has no preexec hook, so it rides the `DEBUG`
 trap (a trap and a `PROMPT_COMMAND` of your own are kept and run first) and reads the typed line from `history 1` — `BASH_COMMAND` alone holds
@@ -205,7 +210,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-505 tests, no dependencies. The end-to-end ones drive the real CLI through a
+509 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS
