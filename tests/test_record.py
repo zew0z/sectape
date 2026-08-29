@@ -40,6 +40,28 @@ def read_until(fd, needle, timeout=20.0, sink=None):
     return "".join(buf), False
 
 
+def run_until_seen(fd, command, needle, sink=None, attempts=4, timeout=8.0):
+    """Send a command and wait for proof the shell ran it.
+
+    A shell that has not finished starting silently drops what is typed at
+    it, and a fixed sleep only hides that on a fast machine. The commands
+    used here are idempotent, so re-sending one is harmless.
+    """
+    for _ in range(attempts):
+        os.write(fd, (command + "\n").encode())
+        _, found = read_until(fd, needle, timeout, sink)
+        if found:
+            return True
+    return False
+
+
+# A pty echoes what is typed at it, so a needle that appears in the command
+# itself matches before the shell has run anything. These expand to something
+# the typed line does not contain.
+ALPHA_CMD, ALPHA_OUT = "echo alpha-$((7*6))", "alpha-42"
+BETA_CMD, BETA_OUT = "echo beta-$((8*8))", "beta-64"
+
+
 @unittest.skipUnless(shutil.which("zsh") or shutil.which("bash"),
                      "no supported shell available")
 @unittest.skipIf(sys.platform == "win32", "POSIX only")
@@ -288,9 +310,8 @@ class TestRecording(unittest.TestCase):
         first_pid, first = self.spawn("rec", "alpha")
         try:
             read_until(first, "REC", 25)
-            time.sleep(1.2)
-            os.write(first, b"echo alpha-work\n")
-            time.sleep(0.8)
+            self.assertTrue(run_until_seen(first, ALPHA_CMD, ALPHA_OUT),
+                            "the first shell never ran anything")
 
             second_pid, second = self.spawn("rec", "beta")
             sink = []
@@ -305,9 +326,11 @@ class TestRecording(unittest.TestCase):
                         read_until(second, None, 0.1, sink)
 
                 read_until(second, "REC", 25, sink)
-                settle(1.5)
-                os.write(second, b"echo beta-work\n")
-                settle(1.0)
+                settle(0.5)
+                self.assertTrue(
+                    run_until_seen(second, BETA_CMD, BETA_OUT, sink),
+                    "the second shell never ran anything")
+                settle(0.3)
                 os.write(second, b"exit\n")
                 deadline = time.time() + 20
                 while time.time() < deadline:
@@ -350,9 +373,9 @@ class TestRecording(unittest.TestCase):
                         sorted(p.name for p in self.exports.iterdir()))
         self.assertTrue(beta.exists(),
                         sorted(p.name for p in self.exports.iterdir()))
-        self.assertIn("echo alpha-work", alpha.read_text())
-        self.assertIn("echo beta-work", beta.read_text())
-        self.assertNotIn("echo beta-work", alpha.read_text(),
+        self.assertIn(ALPHA_OUT, alpha.read_text())
+        self.assertIn(BETA_OUT, beta.read_text())
+        self.assertNotIn(BETA_OUT, alpha.read_text(),
                          "the two sessions were mixed together")
         self.assertFalse((state / "current.json").exists())
 
