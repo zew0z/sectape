@@ -684,16 +684,42 @@ def merge(new_text: str, path: Path) -> str:
     return head + GEN_BEGIN + inner + GEN_END + tail
 
 
+def free_path(path: Path) -> Path:
+    """A path to write to that will not clobber somebody else's file.
+
+    A markdown export merges into its own previous output, which it
+    recognises by the generated block. A file at that name with no block was
+    written by someone else - hand-written notes that happen to share a
+    session's label - and replacing it wholesale is not ours to do. Falls
+    back to `name (1).md` beside it, which stabilises there on the next
+    export because by then it is ours.
+    """
+    path = Path(path)
+    for candidate in [path] + [path.with_name(f"{path.stem} ({n}){path.suffix}")
+                               for n in range(1, 100)]:
+        if not candidate.exists():
+            return candidate
+        try:
+            if GEN_BEGIN in candidate.read_text(encoding="utf-8"):
+                return candidate
+        except OSError:
+            return candidate
+    return path
+
+
 def export(rec: Recording, fmt: str | None = None,
            destination: Path | None = None) -> Path:
     """Render a recording and write it to the output directory."""
     text, suffix = render(rec, fmt)
     if destination is not None:
+        # An explicit -o names the file to write; that is the caller's call.
         path = Path(destination)
     else:
         out_dir = config.settings.output_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"{safe_filename(rec.label)}{suffix}"
+        if GEN_BEGIN in text:
+            path = free_path(path)
     # An export is meant to be read by someone else, so it follows the umask
     # like any other document - mkstemp's 0600 left it unshareable. A file
     # that already exists keeps whatever permissions it was given.

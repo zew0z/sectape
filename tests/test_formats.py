@@ -524,6 +524,61 @@ class TestAwkwardLabels(TempConfig):
         self.assertEqual(headings, ["# # not a heading"])
 
 
+class TestExportDoesNotClobberSomeoneElsesFile(TempConfig):
+    """merge() protects edits inside our document; nothing protected a file
+    we had never written."""
+
+    STEP = Step(cmd="echo hi", output="hi", exit_code=0, started=1700000000.0,
+                source="marker")
+
+    def recording(self):
+        return rec(self.STEP, label="notes", started=1700000000.0)
+
+    def test_a_hand_written_file_survives(self):
+        target = config.settings.output_dir / "notes.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# My notes\n\nMonths of work.\n", encoding="utf-8")
+        written = export(self.recording())
+        self.assertNotEqual(written, target)
+        self.assertIn("Months of work", target.read_text())
+        self.assertIn("echo hi", written.read_text())
+
+    def test_the_export_settles_on_one_file(self):
+        target = config.settings.output_dir / "notes.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("mine\n", encoding="utf-8")
+        first = export(self.recording())
+        second = export(self.recording())
+        self.assertEqual(first, second)
+        self.assertEqual(
+            sorted(p.name for p in config.settings.output_dir.iterdir()),
+            ["notes (1).md", "notes.md"])
+
+    def test_our_own_previous_export_is_merged_as_before(self):
+        first = export(self.recording())
+        self.assertEqual(first.name, "notes.md")
+        second = export(self.recording())
+        self.assertEqual(first, second)
+
+    def test_an_explicit_output_path_is_still_obeyed(self):
+        # -o names the file to write; that is the caller's decision.
+        target = self.root / "chosen.md"
+        target.write_text("mine\n", encoding="utf-8")
+        written = export(self.recording(), destination=target)
+        self.assertEqual(written, target)
+        self.assertIn("echo hi", target.read_text())
+
+    def test_formats_without_a_block_overwrite_as_before(self):
+        # There is no way to tell our JSON from anyone else's, and
+        # re-exporting has to keep working.
+        for fmt, name in (("json", "notes.json"), ("text", "notes.txt"),
+                          ("html", "notes.html")):
+            target = config.settings.output_dir / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("previous\n", encoding="utf-8")
+            self.assertEqual(export(self.recording(), fmt), target, fmt)
+
+
 class TestTextHeader(TempConfig):
     def test_one_command_is_singular(self):
         self.assertIn("(1 command, 0 failed)", to_text(rec(OK_STEP)))

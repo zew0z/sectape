@@ -152,6 +152,14 @@ Behaviour an existing setup may notice. Each is described in full below.
   it. Every command on the line is considered now, so a line is only skipped
   when all of it is plumbing. `clear; exit` is correctly skipped for the same
   reason, where before it was kept as a step.
+- **An export could destroy a file it had never written.** `merge` keeps what
+  you add around the generated block, but a file with no block at all was
+  replaced wholesale - so hand-written notes that happened to share a
+  session's name were silently lost. A markdown export now writes beside such
+  a file, as `notes (1).md`, and settles there on the next export because by
+  then that file is its own. An explicit `-o` still writes exactly where you
+  say, and the formats with no generated block are unchanged, since there is
+  no way to tell our JSON from anyone else's.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.
