@@ -140,6 +140,12 @@ Behaviour an existing setup may notice. Each is described in full below.
   and the new recording lost its label and its directory and exported nothing
   at all. A recorder now finishes and clears only the session it was
   recording.
+- **Tidying up raced with itself.** Removing the session file checked that it
+  existed and then removed it, so two `sectape stop`s - or a stop and the last
+  pane finishing - could each see it and the loser met a `No such file or
+  directory`. `status` had the same shape when a pane log was removed while it
+  was being measured. Both now treat "someone else already did it" as the
+  success it is.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.

@@ -124,8 +124,8 @@ def clear_session_if_idle(slug: str | None = None) -> bool:
         idle = mutate_session(_fn)
     except Exception:
         idle = False
-    if idle and config.settings.current_session_file.exists():
-        config.settings.current_session_file.unlink()
+    if idle:
+        config.settings.current_session_file.unlink(missing_ok=True)
     return bool(idle)
 
 

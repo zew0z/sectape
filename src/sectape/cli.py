@@ -307,8 +307,9 @@ def cmd_stop(args) -> int:
             return 0
 
     _finish(session, quiet=False, fmt=args.format)
-    if config.settings.current_session_file.exists():
-        config.settings.current_session_file.unlink()
+    # missing_ok: another `stop`, or the last pane finishing, may have got
+    # here first - which is a success for both of us, not an error.
+    config.settings.current_session_file.unlink(missing_ok=True)
     return 0
 
 
@@ -575,7 +576,10 @@ def cmd_status(args) -> int:
                     plural(len(panes), "live pane"), running))
     for pane_id, pane in sorted(panes.items()):
         log = Path(pane.get("log", ""))
-        size = log.stat().st_size / 1024 if log.exists() else 0
+        try:
+            size = log.stat().st_size / 1024
+        except OSError:
+            size = 0                  # removed while we were looking at it
         pid = pane.get("pid")
         print(f"      {u.dim(u.g('bar'))} pane {pane_label(pane_id)}  "
               f"{u.grey('pid ' + str(pid))}  {u.grey(f'{size:.1f} KiB')}")

@@ -365,5 +365,36 @@ class TestClearingOnlyYourOwnSession(TempConfig):
         self.assertFalse(clear_session_if_idle("anything"))
 
 
+class TestConcurrentTidyUp(TempConfig):
+    """Two `stop`s, or a stop and the last pane finishing, overlap."""
+
+    def test_clearing_a_session_that_is_already_gone(self):
+        write_json_atomic(config.settings.current_session_file,
+                          {"label": "x", "slug": "x", "panes": {}})
+        self.assertTrue(clear_session_if_idle("x"))
+        # Whoever gets here second must not meet a FileNotFoundError.
+        config.settings.current_session_file.write_text(
+            '{"label": "x", "slug": "x", "panes": {}}', encoding="utf-8")
+        config.settings.current_session_file.unlink()
+        self.assertFalse(clear_session_if_idle("x"))
+
+    def test_status_survives_a_log_removed_underneath_it(self):
+        import io
+        import contextlib
+        from sectape.cli import cmd_status
+        import argparse
+        session_dir = self.sessions / "x"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(config.settings.current_session_file, {
+            "label": "x", "slug": "x", "dir": str(session_dir),
+            "started": 1700000000.0,
+            "panes": {"01": {"pid": os.getpid(),
+                             "log": str(session_dir / "gone.raw")}}})
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(cmd_status(argparse.Namespace(json=False)), 0)
+        self.assertIn("pane 1", buffer.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
