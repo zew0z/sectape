@@ -62,13 +62,28 @@ class Step:
         return self.exit_code is not None and self.exit_code != 0
 
 
+def _is_ignored_command(part: str) -> bool:
+    """Whether one command is plumbing rather than work."""
+    text = part.strip()
+    if not text:
+        return True
+    if text in IGNORED_CMDS:
+        return True
+    return base_command(text) in IGNORED_PROGRAMS
+
+
 def _is_ignored(cmd: str) -> bool:
-    c = cmd.strip()
-    if not c:
+    """Whether a whole typed line is only plumbing.
+
+    Judged over every command on the line. Looking at the first one alone
+    dropped `note "done" && systemctl restart app` in its entirety, taking
+    the restart with it, and kept `clear; exit` even though neither half is
+    worth a step.
+    """
+    text = str(cmd or "").strip()
+    if not text:
         return True
-    if c in IGNORED_CMDS:
-        return True
-    return base_command(c) in IGNORED_PROGRAMS
+    return all(_is_ignored_command(part) for part in commands_in(text))
 
 
 def read_raw_log(path) -> str:

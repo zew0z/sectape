@@ -146,6 +146,12 @@ Behaviour an existing setup may notice. Each is described in full below.
   directory`. `status` had the same shape when a pane log was removed while it
   was being measured. Both now treat "someone else already did it" as the
   success it is.
+- **Writing a note on the same line as a command lost the command.** A line
+  was judged by its first word alone, so `note "done" && systemctl restart
+  app` counted as the `note` helper and was dropped whole - the restart with
+  it. Every command on the line is considered now, so a line is only skipped
+  when all of it is plumbing. `clear; exit` is correctly skipped for the same
+  reason, where before it was kept as a step.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.

@@ -520,5 +520,44 @@ class TestFullScreenProgramsInAPipeline(TempConfig):
                          "MANGLED SCREEN REDRAW")
 
 
+class TestIgnoringPlumbingOnCompoundLines(TempConfig):
+    """A line is only plumbing if everything on it is."""
+
+    def kept(self, cmd: str) -> bool:
+        raw = begin(cmd, 1.0) + "out\r\n" + end(0, 2.0)
+        return bool(parse_transcript(raw))
+
+    def test_a_note_on_its_own_is_dropped(self):
+        self.assertFalse(self.kept("sectape note 'checkpoint'"))
+        self.assertFalse(self.kept("note 'checkpoint'"))
+
+    def test_a_note_sharing_a_line_with_real_work_keeps_the_work(self):
+        # The whole line used to be dropped, taking the command with it.
+        self.assertTrue(self.kept("sectape note 'checkpoint'; nmap -sV host"))
+        self.assertTrue(self.kept("note 'done' && systemctl restart app"))
+
+    def test_shell_plumbing_alone_is_dropped(self):
+        for cmd in ("exit", "clear", "clear; exit", "clear && exit"):
+            self.assertFalse(self.kept(cmd), cmd)
+
+    def test_plumbing_followed_by_work_is_kept(self):
+        self.assertTrue(self.kept("clear && ls -la"))
+        self.assertTrue(self.kept("cd /tmp; nmap -sV host"))
+
+    def test_an_ordinary_pipeline_is_kept(self):
+        self.assertTrue(self.kept("cat f | grep x"))
+
+    def test_the_listing_count_still_agrees_with_the_export(self):
+        raw = "".join(
+            begin(cmd, 1700000000 + i) + "out\r\n" + end(0, 1700000000 + i + 0.5)
+            for i, cmd in enumerate([
+                "nmap -sV host", "sectape note 'x'", "clear; exit",
+                "note 'y' && systemctl restart app", "cat f | grep x"]))
+        d = self.make_session("mixed-plumbing", raw)
+        steps, _ = collect_steps(d)
+        self.assertEqual(count_commands(d), len(steps))
+        self.assertEqual(len(steps), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
