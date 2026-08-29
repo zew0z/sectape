@@ -168,10 +168,17 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
 
     note_size(rows, cols)
 
+    # The size marker is written by the loop, not by the handler. A signal can
+    # arrive in the middle of a partial write to the log, and a marker spliced
+    # into the middle of an escape sequence corrupts the replay. Resizing the
+    # pty and waking the child stay here, because those have to be prompt; the
+    # marker only has to land before the redraw it describes, which it does.
+    pending_size: list[tuple[int, int]] = []
+
     def on_winch(signum, frame):
         size = get_winsize(stdin_fd)
         set_winsize(master_fd, *size)
-        note_size(size[0], size[1])
+        pending_size.append((size[0], size[1]))
         try:
             os.kill(pid, signal.SIGWINCH)
         except OSError:
@@ -205,6 +212,9 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
                 if getattr(exc, "errno", None) == errno.EINTR:
                     continue
                 break
+
+            while pending_size:                 # before anything this wake logs
+                note_size(*pending_size.pop(0))
 
             if stdin_fd in readable:
                 try:
@@ -240,6 +250,8 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
         signal.signal(signal.SIGINT, prev_int)
         signal.signal(signal.SIGTERM, prev_term)
         signal.signal(signal.SIGHUP, prev_hup)
+        while pending_size:
+            note_size(*pending_size.pop(0))
         # Drain whatever the shell printed on its way out.
         try:
             os.set_blocking(master_fd, False)

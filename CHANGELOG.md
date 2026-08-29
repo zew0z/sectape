@@ -160,6 +160,14 @@ Behaviour an existing setup may notice. Each is described in full below.
   then that file is its own. An explicit `-o` still writes exactly where you
   say, and the formats with no generated block are unchanged, since there is
   no way to tell our JSON from anyone else's.
+- **The window-size marker was written from a signal handler.** Resizing the
+  terminal wrote straight into the log from inside the `SIGWINCH` handler,
+  which can interrupt a partial write and splice the marker into the middle
+  of an escape sequence - corrupting that part of the replay. The resize
+  itself still happens in the handler, because the shell has to hear about it
+  promptly; only the marker is left for the loop, which writes it before
+  anything else that wake records, so it still precedes the redraw it
+  describes.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.

@@ -161,6 +161,55 @@ class TestRecording(unittest.TestCase):
         out = self.session([resize, "echo AFTER=$COLUMNS"])
         self.assertIn("AFTER=99", out, "SIGWINCH was not propagated into the pty")
 
+    def test_every_resize_is_recorded_in_order(self):
+        # The size marker is written by the loop rather than the signal
+        # handler, so it cannot be spliced into a partial write - but it must
+        # still land before the output it describes.
+        import re as _re
+        state = self.root / "state"
+        pid, master = self.spawn("rec", "winch")
+        try:
+            read_until(master, "REC", 25)
+            time.sleep(1.2)
+            os.write(master, b"echo before-$((1+1))\n")
+            read_until(master, "before-2", 15)
+            for cols in (100, 140, 70):
+                set_winsize(master, 30, cols)
+                time.sleep(0.4)
+                read_until(master, None, 0.3)
+            os.write(master, b"echo after-$((2+2))\n")
+            read_until(master, "after-4", 15)
+            os.write(master, b"exit\n")
+            read_until(master, None, 20)
+            self.reap(pid)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
+        log = (state / "sessions" / "winch" / "pane_01.raw").read_text(
+            errors="replace")
+        markers = [(m.start(), m.group(1)) for m in
+                   _re.finditer(r"\x1b\]7337;SECTAPE;w\|(\d+)\|\d+\x07", log)]
+        widths = [width for _, width in markers]
+        for cols in ("100", "140", "70"):
+            self.assertIn(cols, widths, f"resize to {cols} was not recorded")
+        self.assertEqual(widths, sorted(widths, key=lambda w: widths.index(w)),
+                         "markers are out of order")
+
+        # Each resize marker belongs between the command before it and the
+        # command after it.
+        before, after = log.find("before-2"), log.find("after-4")
+        self.assertGreater(after, before)
+        for position, width in markers:
+            if width in ("100", "140", "70"):
+                self.assertTrue(before < position < after,
+                                f"the {width}-column marker is misplaced")
+
+        # And no marker was spliced into the middle of an escape sequence.
+        self.assertIsNone(_re.search(r"\x1b\[[0-9;?]*\x1b\]7337", log))
+
     # -- terminal restoration ---------------------------------------------
     def test_terminal_state_is_reset_on_exit(self):
         out = self.session(["echo bye"])
