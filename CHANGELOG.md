@@ -237,6 +237,12 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Added
 
+- When the export cannot be written - a full disk, a read-only output
+  directory - the session's last words are no longer a bare `Permission
+  denied` as your shell exits. It now says the recording is safe, where it is,
+  and the command to retry it with. The pane log was always kept; nothing said
+  so at the moment it mattered.
+
 - The markdown export names the machine the session was recorded on. The HTML
   page and the JSON both carried it and the default format did not, which
   matters as soon as you record on more than one box.

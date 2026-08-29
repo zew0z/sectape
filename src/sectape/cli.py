@@ -218,7 +218,22 @@ def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
             print(u.counter(u.grey("nothing captured")))
             print()
         return None
-    path = export(rec, fmt)
+    try:
+        path = export(rec, fmt)
+    except OSError as exc:
+        # A full disk or a read-only output directory at the end of a session
+        # reads like the work is gone. It is not: the pane log is on disk and
+        # the export can be retried once there is somewhere to put it.
+        detail = getattr(exc, "strerror", None) or str(exc)
+        where = getattr(exc, "filename", "")
+        print(f"  {u.red(u.g('cross'))} could not write the export: {detail}"
+              + (f": {short_path(where)}" if where else ""), file=sys.stderr)
+        print(f"    {u.grey('the recording is safe in')} "
+              f"{short_path(session_dir)}", file=sys.stderr)
+        print(f"    {u.grey('retry with')} "
+              f"{u.bold('sectape export ' + (session_dir.name or label))}",
+              file=sys.stderr)
+        return None
     if not quiet:
         reconstructed = len(rec.reconstructed)
         parts = [plural(len(rec.steps), "command")]

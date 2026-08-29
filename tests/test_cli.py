@@ -9,8 +9,8 @@ import sys
 import unittest
 
 from sectape import __version__, config
-from sectape.cli import (_confirm, build_parser, cmd_list, main,
-                         snapshot)
+from sectape.cli import (_confirm, _finish, build_parser, cmd_list,
+                         main, snapshot)
 from sectape.ui import display_width, fit
 from tests.helpers import TempConfig, begin, end
 
@@ -610,6 +610,67 @@ class TestConfirm(unittest.TestCase):
                             side_effect=AssertionError("must not prompt")):
                 self.assertFalse(_confirm("q", default=False))
                 self.assertTrue(_confirm("q", default=True))
+
+
+class TestExportFailureAtTheEndOfASession(TempConfig):
+    """A full disk as your shell exits must not read like lost work."""
+
+    def setUp(self):
+        super().setUp()
+        import base64
+        self.session_dir = self.sessions / "readonly"
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        b64 = lambda t: base64.b64encode(t.encode()).decode()
+        (self.session_dir / "pane_01.raw").write_text(
+            f"\x1b]7337;SECTAPE;b|{b64('echo precious')}|1700000000\x07out\r\n"
+            f"\x1b]7337;SECTAPE;e|0|1700000001|{b64('/tmp')}\x07",
+            encoding="utf-8")
+        self.session = {"label": "readonly", "slug": "readonly",
+                        "dir": str(self.session_dir), "started": 1700000000.0}
+
+    def finish(self):
+        import contextlib
+        import io
+        import unittest.mock as mock
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("sectape.cli.export",
+                        side_effect=OSError(13, "Permission denied",
+                                            str(self.root / "out" / "readonly.md"))):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                path = _finish(self.session, quiet=False)
+        return path, out.getvalue(), err.getvalue()
+
+    def test_the_failure_does_not_propagate(self):
+        path, _, _ = self.finish()
+        self.assertIsNone(path)
+
+    def test_it_says_what_went_wrong(self):
+        _, _, err = self.finish()
+        self.assertIn("could not write the export", err)
+        self.assertIn("Permission denied", err)
+
+    def test_it_says_the_recording_is_safe(self):
+        _, _, err = self.finish()
+        self.assertIn("the recording is safe", err)
+        self.assertIn("readonly", err)
+
+    def test_it_gives_the_command_to_retry(self):
+        _, _, err = self.finish()
+        self.assertIn("sectape export readonly", err)
+
+    def test_the_pane_log_is_untouched(self):
+        self.finish()
+        self.assertTrue((self.session_dir / "pane_01.raw").exists())
+
+    def test_and_the_export_really_does_work_afterwards(self):
+        self.finish()
+        result = run("export", "readonly",
+                     env={"SECTAPE_STATE_DIR": str(config.settings.state_dir),
+                          "SECTAPE_OUTPUT_DIR": str(config.settings.output_dir),
+                          "SECTAPE_CONFIG": str(self.root / "none.toml")})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("echo precious",
+                      (config.settings.output_dir / "readonly.md").read_text())
 
 
 class TestColumnFitting(unittest.TestCase):
