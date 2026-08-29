@@ -733,9 +733,21 @@ def cmd_doctor(args) -> int:
                         ("output dir", config.settings.output_dir)):
         check(f"{label} writable", os.access(path, os.W_OK), str(path))
 
+    # Ask the recorder the same question it asks itself, and say why not when
+    # the answer is no - doctor claiming hooks the recording will not install
+    # is the one place that must never happen.
     shell, name = chosen_shell()
-    check("shell supports integration", name in SUPPORTED_SHELLS,
-          shell if os.environ.get("SHELL") else "(SHELL unset)", warn_only=True)
+    if name not in SUPPORTED_SHELLS:
+        detail = f"{shell} - only {' and '.join(SUPPORTED_SHELLS)} have hooks"
+    elif shutil.which(shell) is None:
+        detail = f"{shell} - not installed"
+    elif not config.settings.shell_integration:
+        detail = f"{shell} - turned off in the configuration"
+    else:
+        detail = shell
+    check("shell supports integration",
+          integration_available() and config.settings.shell_integration,
+          detail, warn_only=True)
     check("integration hooks render", "_sectape_preexec" in ZSH_HOOKS.format(version=__version__))
     check("output format valid", config.settings.format in WRITERS, config.settings.format)
     if config.settings.config_path:

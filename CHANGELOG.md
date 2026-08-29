@@ -114,6 +114,12 @@ Behaviour an existing setup may notice. Each is described in full below.
   as zsh; the recording falls back to `/bin/sh`, which has no hooks, and the
   banner said "integration on" anyway. The shell has to actually be there now,
   and no wrapper directory is built for one that is not.
+- **`doctor` claimed integration the recording would not install.** It
+  compared the shell's name, so `/nonexistent/zsh` passed the check while the
+  recorder correctly refused it - and telling you whether things will work is
+  the whole point of the command. It now asks the recorder the same question
+  and says why the answer is no: not a supported shell, not installed, or
+  turned off in the configuration.
 - **The recording banner claimed shell integration it did not have.** It
   answered from the `--no-integration` flag alone, so `integration on` was
   printed for fish, sh or any shell whose hooks sectape cannot write - and for

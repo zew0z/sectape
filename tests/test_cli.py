@@ -673,6 +673,73 @@ class TestExportFailureAtTheEndOfASession(TempConfig):
                       (config.settings.output_dir / "readonly.md").read_text())
 
 
+class TestDoctorAgreesWithTheRecorder(TempConfig):
+    """`doctor` exists to say whether things will work.
+
+    Claiming hooks the recording will not install is the one thing it must
+    never do.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.env = {"SECTAPE_STATE_DIR": str(config.settings.state_dir),
+                    "SECTAPE_OUTPUT_DIR": str(config.settings.output_dir),
+                    "SECTAPE_CONFIG": str(self.root / "none.toml")}
+
+    def line(self, **extra):
+        result = run("doctor", env=dict(self.env, **extra))
+        for line in result.stdout.split("\n"):
+            if "shell supports integration" in line:
+                return line
+        self.fail(f"no such check in:\n{result.stdout}")
+
+    def test_a_supported_shell_passes(self):
+        import shutil as _shutil
+        shell = _shutil.which("zsh") or _shutil.which("bash")
+        if not shell:
+            self.skipTest("no supported shell installed")
+        self.assertIn("✓", self.line(SECTAPE_SHELL=shell))
+
+    def test_a_shell_that_is_not_installed_is_flagged(self):
+        line = self.line(SECTAPE_SHELL="/nonexistent/zsh")
+        self.assertNotIn("✓", line)
+        self.assertIn("not installed", line)
+
+    def test_an_unsupported_shell_says_why(self):
+        line = self.line(SECTAPE_SHELL="/bin/sh")
+        self.assertNotIn("✓", line)
+        self.assertIn("hooks", line)
+
+    def test_integration_turned_off_is_reported(self):
+        import shutil as _shutil
+        shell = _shutil.which("zsh") or _shutil.which("bash")
+        if not shell:
+            self.skipTest("no supported shell installed")
+        line = self.line(SECTAPE_SHELL=shell, SECTAPE_SHELL_INTEGRATION="0")
+        self.assertNotIn("✓", line)
+        self.assertIn("configuration", line)
+
+    def test_the_verdict_matches_integration_available(self):
+        # The check and the recorder must never disagree.
+        import shutil as _shutil
+        cases = ["/nonexistent/zsh", "/bin/sh"]
+        found = _shutil.which("zsh") or _shutil.which("bash")
+        if found:
+            cases.append(found)
+        import subprocess
+        import sys
+        for shell in cases:
+            passed = "✓" in self.line(SECTAPE_SHELL=shell)
+            probe = subprocess.run(
+                [sys.executable, "-c",
+                 "from sectape import config; config.load();"
+                 " from sectape.recorder import integration_available;"
+                 " print(integration_available())"],
+                env=dict(os.environ, **dict(self.env, SECTAPE_SHELL=shell)),
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(passed, probe.stdout.strip() == "True", shell)
+
+
 class TestColumnFitting(unittest.TestCase):
     def test_ascii_pads_to_the_asked_width(self):
         self.assertEqual(fit("abc", 6), "abc   ")
