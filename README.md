@@ -40,17 +40,20 @@ Failed to renew certificate example.com with error: ...
 
 ## Install
 
+Not published to PyPI yet, so install it from a checkout:
+
 ```bash
-pipx install sectape
+git clone https://github.com/zew0z/sectape
+pipx install ./sectape
+```
+
+Or, to keep working on it in place:
+
+```bash
+pipx install --editable ./sectape
 ```
 
 Requires Python 3.11+ on macOS or Linux. No dependencies.
-
-From a checkout:
-
-```bash
-pipx install -e .
-```
 
 ## Use
 

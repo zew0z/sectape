@@ -255,6 +255,12 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Added
 
+- The README told everyone to `pipx install sectape`, which 404s - the package
+  is not on PyPI. It now documents installing from a checkout, which is what
+  actually works today. Both documented commands were run against a clean
+  virtualenv; `twine check` passes on the built wheel and sdist, so publishing
+  is a decision rather than a piece of work.
+
 - When the export cannot be written - a full disk, a read-only output
   directory - the session's last words are no longer a bare `Permission
   denied` as your shell exits. It now says the recording is safe, where it is,
