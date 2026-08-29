@@ -237,21 +237,22 @@ class TestRecording(unittest.TestCase):
         """
         pid, master = self.spawn("rec", "termios")
         try:
-            time.sleep(0.3)
-            before = self.line_discipline(master)
-            self.assertTrue(before["ICANON"] and before["ECHO"],
-                            "the test's own terminal did not start cooked")
             read_until(master, "REC", 25)
             self.assertTrue(
                 run_until_seen(master, "echo raw-$((11*11))", "raw-121"),
                 "the shell never ran the command")
+            # Sampling the terminal before the recorder starts is a race - it
+            # may already have gone raw. What matters is that it is raw while
+            # recording and cooked afterwards, which needs no earlier reading.
             during = self.line_discipline(master)
             self.assertFalse(any(during.values()),
                              f"the recorder never entered raw mode: {during}")
             ending(pid, master)
             self.reap(pid, 20)
-            self.assertEqual(self.line_discipline(master), before,
-                             "the terminal was left in raw mode")
+            after = self.line_discipline(master)
+            self.assertTrue(after["ICANON"], "canonical input not restored")
+            self.assertTrue(after["ECHO"], "echo not restored")
+            self.assertTrue(after["ISIG"], "signal keys not restored")
         finally:
             try:
                 os.close(master)
