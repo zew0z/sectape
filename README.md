@@ -188,8 +188,12 @@ max_output_lines = 300
 max_output_chars = 20000
 ```
 
-Every value has a `SECTAPE_*` environment variable equivalent, and `--state-dir`
-/ `--output-dir` / `--no-redact` override both.
+Every value except the redaction patterns — which are a list, so they live in
+the file only — has a `SECTAPE_*` environment variable equivalent:
+`SECTAPE_STATE_DIR`, `SECTAPE_OUTPUT_DIR`, `SECTAPE_FORMAT`, `SECTAPE_PROMPT`,
+`SECTAPE_REDACT`, `SECTAPE_REDACT_REPLACEMENT`, `SECTAPE_SHELL_INTEGRATION`,
+`SECTAPE_MAX_OUTPUT_LINES`, `SECTAPE_MAX_OUTPUT_CHARS`. `--state-dir` /
+`--output-dir` / `--no-redact` override both.
 
 ## Privacy
 

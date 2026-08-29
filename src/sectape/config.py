@@ -152,6 +152,16 @@ def _from_env() -> dict:
         values["redact"] = _flag(v)
     if (v := _env("SECTAPE_SHELL_INTEGRATION")) is not None:
         values["shell_integration"] = _flag(v)
+    if (v := _env("SECTAPE_REDACT_REPLACEMENT")):
+        values["redact_replacement"] = v
+    for name, key in (("SECTAPE_MAX_OUTPUT_LINES", "max_output_lines"),
+                      ("SECTAPE_MAX_OUTPUT_CHARS", "max_output_chars")):
+        if (v := _env(name)):
+            try:
+                values[key] = int(v)
+            except ValueError:
+                raise ConfigError(f"{name} must be a whole number, "
+                                  f"not {v!r}") from None
     return values
 
 
@@ -245,7 +255,9 @@ TEMPLATE = '''\
 # sectape configuration
 # Anything here can also be set with an environment variable:
 # SECTAPE_STATE_DIR, SECTAPE_OUTPUT_DIR, SECTAPE_FORMAT, SECTAPE_PROMPT,
-# SECTAPE_REDACT, SECTAPE_SHELL_INTEGRATION.
+# SECTAPE_REDACT, SECTAPE_SHELL_INTEGRATION, SECTAPE_REDACT_REPLACEMENT,
+# SECTAPE_MAX_OUTPUT_LINES, SECTAPE_MAX_OUTPUT_CHARS. The redaction patterns
+# are a list, so they live here only.
 
 [general]
 # Raw pane logs and session state.

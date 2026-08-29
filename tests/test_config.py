@@ -227,5 +227,56 @@ class TestUnknownKeysAreReported(TempConfig):
         self.assertEqual(config.unknown_keys(self.write("[broken\n")), [])
 
 
+class TestEveryValueHasAnEnvironmentVariable(TempConfig):
+    """The README says so, so it had better be true."""
+
+    # setting -> (variable, value to set, value expected on Settings)
+    CASES = {
+        "state_dir": ("SECTAPE_STATE_DIR", "/tmp/st", Path("/tmp/st")),
+        "output_dir": ("SECTAPE_OUTPUT_DIR", "/tmp/out", Path("/tmp/out")),
+        "format": ("SECTAPE_FORMAT", "json", "json"),
+        "prompt": ("SECTAPE_PROMPT", "> ", "> "),
+        "redact": ("SECTAPE_REDACT", "0", False),
+        "shell_integration": ("SECTAPE_SHELL_INTEGRATION", "0", False),
+        "redact_replacement": ("SECTAPE_REDACT_REPLACEMENT", "[gone]", "[gone]"),
+        "max_output_lines": ("SECTAPE_MAX_OUTPUT_LINES", "42", 42),
+        "max_output_chars": ("SECTAPE_MAX_OUTPUT_CHARS", "999", 999),
+    }
+
+    def set(self, name, value):
+        os.environ[name] = value
+        self.addCleanup(lambda: os.environ.pop(name, None))
+
+    def test_each_one_takes_effect(self):
+        for setting, (name, given, expected) in self.CASES.items():
+            self.set(name, given)
+            self.assertEqual(getattr(config.load(self.root / "absent.toml"),
+                                     setting), expected, setting)
+            os.environ.pop(name, None)
+
+    def test_every_setting_is_covered_by_this_test(self):
+        # If a setting is added without a variable, this notices.
+        settable = {name for name in config.Settings.__dataclass_fields__
+                    if name != "config_path"}
+        # The patterns are a list; the README says they live in the file only.
+        self.assertEqual(settable - set(self.CASES), {"redact_patterns"})
+
+    def test_a_non_numeric_limit_is_reported(self):
+        self.set("SECTAPE_MAX_OUTPUT_LINES", "lots")
+        with self.assertRaises(config.ConfigError) as caught:
+            config.load(self.root / "absent.toml")
+        self.assertIn("SECTAPE_MAX_OUTPUT_LINES", str(caught.exception))
+
+    def test_the_environment_still_beats_the_file(self):
+        path = self.root / "c.toml"
+        path.write_text("[output]\nmax_output_lines = 7\n", encoding="utf-8")
+        self.set("SECTAPE_MAX_OUTPUT_LINES", "11")
+        self.assertEqual(config.load(path).max_output_lines, 11)
+
+    def test_the_template_lists_the_variables_it_claims(self):
+        for name, _, _ in self.CASES.values():
+            self.assertIn(name, config.TEMPLATE, name)
+
+
 if __name__ == "__main__":
     unittest.main()

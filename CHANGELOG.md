@@ -320,6 +320,16 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Added
 
+- **Three settings had no environment variable, though the README promised one
+  for every value.** `max_output_lines`, `max_output_chars` and
+  `redact_replacement` could only be set in a config file, so a CI job or a
+  container had no way to reach them. `SECTAPE_MAX_OUTPUT_LINES`,
+  `SECTAPE_MAX_OUTPUT_CHARS` and `SECTAPE_REDACT_REPLACEMENT` now work like the
+  rest, with the same clear error a bad value gets elsewhere: a non-numeric
+  limit says which variable it was and what it saw. The test walks `Settings`'
+  own fields, so a setting added later without a variable fails it rather than
+  quietly making the sentence wrong again.
+
 - Redaction covers the token formats their issuers have since moved to, which
   the patterns had not caught up with: GitHub's fine-grained `github_pat_`
   tokens, and AWS `ASIA` temporary keys - the kind STS and SSO hand out, so
