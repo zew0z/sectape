@@ -223,8 +223,9 @@ class TestRecording(unittest.TestCase):
         try:
             read_until(master, "REC", 25, sink)
             time.sleep(1.0)
-            os.write(master, b"echo before-term\n")
-            time.sleep(0.8)
+            self.assertTrue(
+                run_until_seen(master, "echo before-$((3*3))", "before-9", sink),
+                "the shell never ran the command")
             os.kill(pid, signal.SIGTERM)
             read_until(master, None, 15, sink)
             exited = self.reap(pid, 15)
@@ -245,8 +246,9 @@ class TestRecording(unittest.TestCase):
         try:
             read_until(master, "REC", 25, sink)
             time.sleep(1.0)
-            os.write(master, b"echo work-before-hangup\n")
-            time.sleep(0.8)
+            self.assertTrue(
+                run_until_seen(master, "echo hangup-$((4*4))", "hangup-16", sink),
+                "the shell never ran the command")
             os.kill(pid, signal.SIGHUP)
             read_until(master, None, 15, sink)
             self.assertTrue(self.reap(pid, 15), "recorder did not exit on SIGHUP")
@@ -259,7 +261,7 @@ class TestRecording(unittest.TestCase):
         note = self.exports / "hangup.md"
         self.assertTrue(note.exists(),
                         sorted(p.name for p in self.exports.iterdir()))
-        self.assertIn("work-before-hangup", note.read_text(),
+        self.assertIn("hangup-16", note.read_text(),
                       "the work done before the hangup was lost")
         self.assertFalse((self.root / "state" / "current.json").exists(),
                          "the session was left marked active")
@@ -273,8 +275,9 @@ class TestRecording(unittest.TestCase):
         try:
             read_until(master, "REC", 25)
             time.sleep(1.0)
-            os.write(master, b"echo work-before-kill\n")
-            time.sleep(0.8)
+            self.assertTrue(
+                run_until_seen(master, "echo killed-$((5*5))", "killed-25"),
+                "the shell never ran the command")
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
         finally:
@@ -300,7 +303,7 @@ class TestRecording(unittest.TestCase):
             [sys.executable, "-m", "sectape", "export", "killed"],
             env=self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("work-before-kill", (self.exports / "killed.md").read_text())
+        self.assertIn("killed-25", (self.exports / "killed.md").read_text())
 
         # And `stop` clears the session that was left behind.
         subprocess.run([sys.executable, "-m", "sectape", "stop"],
@@ -636,8 +639,9 @@ class TestRecording(unittest.TestCase):
         try:
             read_until(master, "REC", 25)
             time.sleep(1.2)
-            os.write(master, b"echo before-force\n")
-            time.sleep(0.8)
+            self.assertTrue(
+                run_until_seen(master, "echo forced-$((6*6))", "forced-36"),
+                "the shell never ran the command")
 
             # Keep reading the pty while `stop` runs: a real terminal always
             # drains, and a recorder blocked on a full buffer cannot act on a
@@ -674,7 +678,7 @@ class TestRecording(unittest.TestCase):
         note = self.exports / "forced.md"
         self.assertTrue(note.exists(),
                         sorted(p.name for p in self.exports.iterdir()))
-        self.assertIn("echo before-force", note.read_text())
+        self.assertIn("forced-36", note.read_text())
 
     def test_a_session_killed_inside_a_full_screen_program_still_exports(self):
         # The alternate screen is never left when the recorder is killed in
@@ -684,8 +688,12 @@ class TestRecording(unittest.TestCase):
         try:
             read_until(master, "REC", 25)
             time.sleep(1.2)
-            os.write(master, b"echo important-work\n")
-            time.sleep(0.8)
+            self.assertTrue(
+                run_until_seen(master, "echo kept-$((7*7))", "kept-49"),
+                "the shell never ran the command")
+            # Let the prompt come back, so the next thing typed is not echoed
+            # into this command's output.
+            time.sleep(0.6)
             # enter the alternate screen and stay there
             os.write(master, b"printf '\\033[?1049hVIM-SCREEN-NOISE\\n'\n")
             time.sleep(0.8)
@@ -701,12 +709,18 @@ class TestRecording(unittest.TestCase):
         self.assertTrue(note.exists(),
                         sorted(p.name for p in self.exports.iterdir()))
         text = note.read_text()
-        self.assertIn("important-work", text, "the transcript was thrown away")
+        self.assertIn("kept-49", text, "the transcript was thrown away")
         # The marker text is part of the command the user typed, so it appears
         # in that step's heading and in its echoed command line - twice. A
         # third occurrence would mean the redrawn screen was kept as output.
-        self.assertEqual(text.count("VIM-SCREEN-NOISE"), 2,
-                         "the alternate-screen redraw was captured as output")
+        # The property that matters: the alternate-screen step shows the
+        # command and nothing else. Its console block holds one line, the
+        # command itself.
+        block = text.split("### 2. ")[1].split("```console\n")[1].split("```")[0]
+        body = [line for line in block.split("\n") if line.strip()]
+        self.assertEqual(len(body), 1,
+                         f"the redraw was captured as output: {body}")
+        self.assertTrue(body[0].startswith("$ "), body[0])
 
     def test_recording_again_under_the_same_label_says_it_is_appending(self):
         # The panes of an earlier recording are kept and numbered as though
