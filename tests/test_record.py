@@ -53,6 +53,11 @@ class TestRecording(unittest.TestCase):
         self.rc.mkdir(parents=True)
         (self.rc / ".zshrc").write_text("PS1='%% '\n")
         (self.rc / ".bashrc").write_text("PS1='$ '\n")
+        # Debian and Ubuntu run compinit from /etc/zsh/zshrc, which asks
+        # "insecure directories ... continue [y] or abort [n]?" on a fresh
+        # runner and swallows the first keystroke the test sends - `echo`
+        # arrives as `cho`. Set before any rc file runs.
+        (self.rc / ".zshenv").write_text("skip_global_compinit=1\n")
         self.env = dict(os.environ)
         self.env.update({
             "SECTAPE_STATE_DIR": str(self.root / "state"),
@@ -63,6 +68,8 @@ class TestRecording(unittest.TestCase):
             "HOME": str(self.rc) if self.shell.endswith("bash") else os.environ["HOME"],
             "TERM": "xterm-256color",
             "PYTHONUNBUFFERED": "1",
+            "skip_global_compinit": "1",
+            "ZSH_DISABLE_COMPFIX": "true",
         })
         self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
 
@@ -687,6 +694,8 @@ class TestBashRecording(unittest.TestCase):
             "HOME": str(home),
             "TERM": "xterm-256color",
             "PYTHONUNBUFFERED": "1",
+            "skip_global_compinit": "1",
+            "ZSH_DISABLE_COMPFIX": "true",
         })
         self.env.pop("ZDOTDIR", None)
         self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
