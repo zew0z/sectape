@@ -109,6 +109,11 @@ Behaviour an existing setup may notice. Each is described in full below.
   so a session mixing an integrated pane with one recorded without integration
   said nothing at all about the half that was less reliable. The notice now
   appears whenever any of it was, and says how much.
+- **A `SHELL` naming a binary that is not installed still promised
+  integration.** The check looked at the name, so `/nonexistent/zsh` counted
+  as zsh; the recording falls back to `/bin/sh`, which has no hooks, and the
+  banner said "integration on" anyway. The shell has to actually be there now,
+  and no wrapper directory is built for one that is not.
 - **The recording banner claimed shell integration it did not have.** It
   answered from the `--no-integration` flag alone, so `integration on` was
   printed for fish, sh or any shell whose hooks sectape cannot write - and for

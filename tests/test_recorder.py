@@ -185,7 +185,13 @@ class TestIntegrationAvailability(unittest.TestCase):
         os.environ["SECTAPE_SHELL"] = path
 
     def test_supported_shells(self):
-        for shell in ("/bin/zsh", "/usr/local/bin/bash", "/opt/homebrew/bin/zsh"):
+        # Real paths only: a shell that is not installed cannot offer hooks,
+        # however zsh-like its name looks.
+        import shutil as _shutil
+        found = [p for p in (_shutil.which("zsh"), _shutil.which("bash")) if p]
+        if not found:
+            self.skipTest("neither zsh nor bash is installed")
+        for shell in found:
             self.set_shell(shell)
             self.assertTrue(integration_available(), shell)
 
@@ -210,6 +216,26 @@ class TestIntegrationAvailability(unittest.TestCase):
                 finally:
                     if wrapper:
                         shutil.rmtree(wrapper, ignore_errors=True)
+
+    def test_a_shell_that_is_not_installed_offers_no_integration(self):
+        # The name still looks like zsh, but the recording falls back to
+        # /bin/sh, which has no hooks - so the banner must not promise them.
+        for shell in ("/nonexistent/zsh", "/nowhere/bash", "/nope/zsh"):
+            self.set_shell(shell)
+            self.assertFalse(integration_available(), shell)
+
+    def test_a_shell_found_on_the_path_still_counts(self):
+        import shutil as _shutil
+        if not _shutil.which("zsh"):
+            self.skipTest("zsh not on PATH")
+        self.set_shell("zsh")
+        self.assertTrue(integration_available())
+
+    def test_no_wrapper_is_built_for_a_missing_shell(self):
+        # And so no temporary directory is left behind for one either.
+        self.set_shell("/nonexistent/zsh")
+        _, _, wrapper = prepare_shell(False)
+        self.assertIsNone(wrapper)
 
     def test_the_shell_is_chosen_from_the_environment(self):
         os.environ.pop("SECTAPE_SHELL", None)

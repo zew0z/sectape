@@ -60,7 +60,15 @@ def integration_available(no_integration: bool = False) -> bool:
     was told "integration on" and then handed a transcript read back off the
     screen.
     """
-    return not no_integration and chosen_shell()[1] in SUPPORTED_SHELLS
+    if no_integration:
+        return False
+    shell, name = chosen_shell()
+    if name not in SUPPORTED_SHELLS:
+        return False
+    # A `SHELL` naming a binary that is not there still looks like zsh. The
+    # recording falls back to /bin/sh, which has no hooks, so promising
+    # integration on the strength of the name alone was wrong twice over.
+    return shutil.which(shell) is not None
 
 
 def prepare_shell(no_integration: bool) -> tuple[str, str, Path | None]:
