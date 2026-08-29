@@ -382,6 +382,11 @@ Behaviour an existing setup may notice. Each is described in full below.
   cannot contain, so the proof can only come from the shell having run the
   command. Several short attempts rather than one long wait, which turned out
   to be faster than the sleeps as well as steadier.
+- The privacy claim that a password typed at a hidden prompt never reaches the
+  log is checked rather than asserted. It holds - nothing displayed is nothing
+  recorded - and the test proves it is not passing vacuously: the password's
+  length is echoed, so the shell demonstrably read it, and the answer to a
+  *visible* prompt in the same session does appear in the log.
 - The failure this project was written for - a terminal left in raw mode after
   a recording - is now actually asserted. The end-to-end tests said so in their
   docstring and checked the escape state, but nothing looked at the line

@@ -491,6 +491,60 @@ class TestRecording(unittest.TestCase):
                          "the two sessions were mixed together")
         self.assertFalse((state / "current.json").exists())
 
+    def test_a_password_typed_at_a_hidden_prompt_is_not_recorded(self):
+        """The privacy claim in the README, checked rather than assumed.
+
+        `sudo`, `ssh` and `passwd` turn echo off to read a password. The log
+        holds what the terminal displayed, so nothing displayed is nothing
+        logged - but that is worth proving, because the whole state
+        directory is only as private as this.
+        """
+        secret = "hunter2-TOPSECRET-passphrase"
+        # The prompt is assembled by the shell, so the typed line does not
+        # contain it. A pty echoes what is typed, so a needle that appears in
+        # the command matches before the shell has turned echo off - and the
+        # test would then type the password into a terminal still echoing it.
+        hidden = ('P=Pass; read -s "pw?${P}word: "' if self.shell.endswith("zsh")
+                  else 'P=Pass; read -s -p "${P}word: " pw')
+        visible = ('V=Vis; read "shown?${V}ible: "' if self.shell.endswith("zsh")
+                   else 'V=Vis; read -p "${V}ible: " shown')
+        pid, master = self.spawn("rec", "secret")
+        try:
+            read_until(master, "REC", 25)
+            self.assertTrue(run_until_seen(master, "echo ready-$((12*12))",
+                                           "ready-144"),
+                            "the shell never ran anything")
+            os.write(master, (hidden + '; echo "len=${#pw}"\n').encode())
+            read_until(master, "Password:", 15)
+            os.write(master, (secret + "\n").encode())
+            read_until(master, f"len={len(secret)}", 15)
+            # A visible prompt, for contrast: its answer is echoed, so it is
+            # logged, which shows the log does capture what is typed.
+            os.write(master, (visible + "\n").encode())
+            read_until(master, "Visible:", 15)
+            os.write(master, b"VISIBLE-ANSWER\n")
+            read_until(master, "VISIBLE-ANSWER", 15)
+            os.write(master, b"exit\n")
+            read_until(master, None, 20)
+            self.reap(pid)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
+        log = (self.root / "state" / "sessions" / "secret"
+               / "pane_01.raw").read_text(errors="replace")
+        self.assertNotIn(secret, log, "the password reached the raw pane log")
+        self.assertIn(f"len={len(secret)}", log,
+                      "the shell never read the password, so this proves nothing")
+        self.assertIn("VISIBLE-ANSWER", log,
+                      "echoed input is not being logged, so neither test means much")
+        note = self.exports / "secret.md"
+        if note.exists():
+            self.assertNotIn(secret, note.read_text(),
+                             "the password reached the export")
+
     # -- the export --------------------------------------------------------
     def test_export_has_exact_commands_and_exit_codes(self):
         self.session(["echo hello-from-e2e", "false"])
