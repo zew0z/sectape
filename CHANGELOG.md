@@ -371,6 +371,12 @@ Behaviour an existing setup may notice. Each is described in full below.
 - The shipped completion scripts are checked: both must parse under `zsh -n` /
   `bash -n`, and both must offer exactly the commands the parser defines, so a
   new command cannot quietly stop being completable.
+- No end-to-end test types at a shell that may not be reading yet. A fixed
+  sleep after the banner was the cause of every pty flake seen here, including
+  two that only failed on CI; the tests now wait for output the typed line
+  cannot contain, so the proof can only come from the shell having run the
+  command. Several short attempts rather than one long wait, which turned out
+  to be faster than the sleeps as well as steadier.
 - The two unclean endings a recording actually meets have end-to-end tests:
   SIGHUP, which is what closing the terminal window sends, and SIGKILL, after
   which nothing is exported at the time and the pane log on disk has to be

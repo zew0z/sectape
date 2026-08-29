@@ -40,12 +40,14 @@ def read_until(fd, needle, timeout=20.0, sink=None):
     return "".join(buf), False
 
 
-def run_until_seen(fd, command, needle, sink=None, attempts=4, timeout=8.0):
+def run_until_seen(fd, command, needle, sink=None, attempts=8, timeout=2.0):
     """Send a command and wait for proof the shell ran it.
 
     A shell that has not finished starting silently drops what is typed at
     it, and a fixed sleep only hides that on a fast machine. The commands
-    used here are idempotent, so re-sending one is harmless.
+    used here are idempotent, so re-sending one is harmless - and several
+    short attempts cost far less than one long one, because the usual reason
+    for a miss is that the shell was a moment away from being ready.
     """
     for _ in range(attempts):
         os.write(fd, (command + "\n").encode())
@@ -505,9 +507,10 @@ class TestRecording(unittest.TestCase):
         sink = []
         try:
             read_until(master, "REC", 25, sink)
-            time.sleep(1.0)
-            os.write(master, b"echo before-stop\n")
-            time.sleep(0.6)
+            self.assertTrue(
+                run_until_seen(master, "echo inside-$((8*8))", "inside-64", sink),
+                "the shell never ran the command")
+            time.sleep(0.4)
             os.write(master,
                      f"{sys.executable} -m sectape stop\n".encode())
             read_until(master, None, 25, sink)
@@ -520,7 +523,7 @@ class TestRecording(unittest.TestCase):
                 pass
         self.assertTrue((self.exports / "inside.md").exists(),
                         sorted(p.name for p in self.exports.iterdir()))
-        self.assertIn("echo before-stop", (self.exports / "inside.md").read_text())
+        self.assertIn("inside-64", (self.exports / "inside.md").read_text())
 
     def test_note_helper_is_available_inside_a_recording(self):
         self.session(["note 'annotated from inside'", "echo after"], label="helper")
@@ -541,9 +544,8 @@ class TestRecording(unittest.TestCase):
         state = self.root / "state"
         first_pid, first = self.spawn("rec", "handover")
         read_until(first, "REC", 25)
-        time.sleep(1.0)
-        os.write(first, b"echo from-first\n")
-        time.sleep(0.8)
+        self.assertTrue(run_until_seen(first, "echo first-$((9*9))", "first-81"),
+                        "the first shell never ran anything")
 
         second_pid, second = self.spawn("attach")
         read_until(second, "REC", 25)
@@ -575,7 +577,7 @@ class TestRecording(unittest.TestCase):
                         "the attached pane left without exporting: "
                         + str(sorted(p.name for p in self.exports.iterdir())))
         text = note.read_text()
-        self.assertIn("echo from-first", text)
+        self.assertIn("first-81", text)
         self.assertIn("echo from-second", text)
         self.assertFalse((state / "current.json").exists(),
                          "the finished session is still marked active")
@@ -731,9 +733,9 @@ class TestRecording(unittest.TestCase):
         sink = []
         try:
             read_until(master, "REC", 25, sink)
-            time.sleep(1.0)
-            os.write(master, b"echo second-day\n")
-            time.sleep(0.7)
+            self.assertTrue(
+                run_until_seen(master, "echo second-$((10*10))", "second-100", sink),
+                "the shell never ran the command")
             os.write(master, b"exit\n")
             read_until(master, None, 25, sink)
             self.reap(pid)
@@ -747,7 +749,7 @@ class TestRecording(unittest.TestCase):
                       "appending to an existing label was silent")
         text = (self.exports / "reused.md").read_text()
         self.assertIn("echo first-day", text)
-        self.assertIn("echo second-day", text)
+        self.assertIn("second-100", text)
 
     def test_show_prints_the_active_recording(self):
         self.session(["echo showable"])
