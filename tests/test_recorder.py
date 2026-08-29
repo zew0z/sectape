@@ -56,7 +56,14 @@ class TestWriteAll(unittest.TestCase):
         write_all(-1, b"")          # must not raise or spin
 
 
+ZSH = shutil.which("zsh")
+BASH = shutil.which("bash")
+
+
 class TestPrepareShell(unittest.TestCase):
+    """Hooks are only built for a shell that is really installed, so these
+    use whatever is on this machine rather than a hard-coded path."""
+
     def tearDown(self):
         for path in getattr(self, "_made", []):
             shutil.rmtree(path, ignore_errors=True)
@@ -75,8 +82,9 @@ class TestPrepareShell(unittest.TestCase):
         self._made = [wrapper] if wrapper else []
         return shell, name, wrapper
 
+    @unittest.skipUnless(ZSH, "zsh not installed")
     def test_zsh_wrapper_sources_real_rc_then_adds_hooks(self):
-        shell, name, wrapper = self.prepare(SECTAPE_SHELL="/bin/zsh")
+        shell, name, wrapper = self.prepare(SECTAPE_SHELL=ZSH)
         self.assertEqual(name, "zsh")
         self.assertIsNotNone(wrapper)
         zshrc = (wrapper / ".zshrc").read_text()
@@ -86,19 +94,24 @@ class TestPrepareShell(unittest.TestCase):
         for name_ in (".zshenv", ".zprofile", ".zlogin"):
             self.assertTrue((wrapper / name_).exists(), name_)
 
+    @unittest.skipUnless(BASH, "bash not installed")
     def test_bash_wrapper(self):
-        shell, name, wrapper = self.prepare(SECTAPE_SHELL="/bin/bash")
+        shell, name, wrapper = self.prepare(SECTAPE_SHELL=BASH)
         self.assertEqual(name, "bash")
         rc = (wrapper / "bashrc").read_text()
         self.assertIn("_sectape_precmd", rc)
         self.assertIn(".bashrc", rc)
 
+    @unittest.skipUnless(ZSH or BASH, "no supported shell installed")
     def test_wrapper_is_owner_only(self):
-        _, _, wrapper = self.prepare(SECTAPE_SHELL="/bin/zsh")
+        _, _, wrapper = self.prepare(SECTAPE_SHELL=ZSH or BASH)
         self.assertEqual(stat.S_IMODE(wrapper.stat().st_mode), 0o700)
 
+    @unittest.skipUnless(ZSH or BASH, "no supported shell installed")
     def test_no_integration_builds_nothing(self):
-        _, _, wrapper = self.prepare(no_integration=True, SECTAPE_SHELL="/bin/zsh")
+        # A real shell, so this tests the flag rather than a missing binary.
+        _, _, wrapper = self.prepare(no_integration=True,
+                                     SECTAPE_SHELL=ZSH or BASH)
         self.assertIsNone(wrapper)
 
     def test_unsupported_shell_builds_nothing(self):
