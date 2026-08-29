@@ -304,7 +304,14 @@ def to_text(rec: Recording) -> str:
     prompt = config.settings.prompt
     out = [f"# {rec.label}  ({plural(len(rec.steps), 'command')}, "
            f"{len(rec.failed)} failed)", ""]
+    current_pane = None
     for kind, item in rec.timeline():
+        # Panes interleave by time, and without a marker two tabs read as one
+        # shell running everything in sequence - so a `tail -f` in one tab
+        # looked as though it had exited before the next command started.
+        if kind == "step" and rec.panes > 1 and item.pane != current_pane:
+            current_pane = item.pane
+            out += [f"# --- pane {pane_label(current_pane)} ---", ""]
         if kind == "note":
             for line in str(item["text"]).split("\n"):
                 out.append(f"# {line}")

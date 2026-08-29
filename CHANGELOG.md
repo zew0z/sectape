@@ -205,6 +205,13 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Changed
 
+- **The `text` export gave no sign that panes had changed.** Commands from
+  several tabs interleave by time, and with nothing to mark the switch they
+  read as one shell running everything in sequence - a `tail -f` in one tab
+  looked as though it had exited before the next command started. Pane
+  switches are marked with a `#` comment, like the header and notes, and only
+  when a session has more than one pane.
+
 - **A filtered export carried every note in the session.** `--last 2` came out
   as ten unrelated annotations followed by the two commands you asked for.
   Notes are now narrowed with the commands: a filtered document keeps the ones

@@ -532,6 +532,50 @@ class TestTextHeader(TempConfig):
         self.assertIn("(2 commands, 1 failed)", to_text(rec(OK_STEP, BAD_STEP)))
 
 
+class TestTextPaneMarkers(TempConfig):
+    """Two tabs interleave by time; without a marker they read as one shell."""
+
+    def two_panes(self):
+        return [
+            Step(cmd="tail -f app.log", output="waiting", exit_code=0,
+                 started=100.0, pane="01", source="marker"),
+            Step(cmd="systemctl restart app", exit_code=0,
+                 started=102.0, pane="02", source="marker"),
+            Step(cmd="grep ERROR app.log", output="boom", exit_code=0,
+                 started=104.0, pane="01", source="marker"),
+        ]
+
+    def test_a_single_pane_session_has_no_markers(self):
+        one = [Step(cmd="echo hi", output="hi", exit_code=0, started=1.0,
+                    pane="01", source="marker")]
+        self.assertNotIn("pane", to_text(rec(*one, panes=1)))
+
+    def test_each_switch_is_marked(self):
+        text = to_text(rec(*self.two_panes(), panes=2))
+        self.assertEqual(text.count("# --- pane 1 ---"), 2)
+        self.assertEqual(text.count("# --- pane 2 ---"), 1)
+
+    def test_the_marker_precedes_the_command_it_belongs_to(self):
+        lines = [l for l in to_text(rec(*self.two_panes(), panes=2)).split("\n")
+                 if l.strip()]
+        marker = lines.index("# --- pane 2 ---")
+        self.assertTrue(lines[marker + 1].endswith("systemctl restart app"))
+
+    def test_markers_are_comments_like_the_header_and_notes(self):
+        # The format is meant for piping; anything added stays a comment.
+        text = to_text(rec(*self.two_panes(), panes=2,
+                           notes=[{"at": 101.0, "text": "a note"}]))
+        for line in text.split("\n"):
+            if line.strip() and not line.startswith(("$ ", "#")):
+                self.assertIn(line, ("waiting", "boom"), line)
+
+    def test_every_command_still_appears(self):
+        text = to_text(rec(*self.two_panes(), panes=2))
+        for command in ("tail -f app.log", "systemctl restart app",
+                        "grep ERROR app.log"):
+            self.assertIn(command, text)
+
+
 class TestRecordingSummary(unittest.TestCase):
     def test_busy_and_wall_time(self):
         r = rec(OK_STEP, BAD_STEP, started=1700000000.0, ended=1700000010.0)
