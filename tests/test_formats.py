@@ -579,6 +579,54 @@ class TestExportDoesNotClobberSomeoneElsesFile(TempConfig):
             self.assertEqual(export(self.recording(), fmt), target, fmt)
 
 
+class TestLongCommandHeadings(TempConfig):
+    """A pasted command can be kilobytes; a heading cannot."""
+
+    LONG = ("curl -X POST https://api.example.com/v1/ingest "
+            + " ".join(f"-d field{i}=value{i}" for i in range(400)))
+
+    def recording(self, cmd=None):
+        return rec(Step(cmd=cmd or self.LONG, output="ok", exit_code=0,
+                        started=1.0, source="marker"))
+
+    def heading(self, text):
+        return [l for l in text.split("\n") if l.startswith("### ")][0]
+
+    def test_the_heading_is_bounded(self):
+        heading = self.heading(to_markdown(self.recording()))
+        self.assertLess(len(heading), 140, heading[:60])
+        self.assertTrue(heading.rstrip("`").endswith("…"))
+
+    def test_a_short_command_is_untouched(self):
+        self.assertEqual(self.heading(to_markdown(self.recording("ls -la"))),
+                         "### 1. `ls -la`")
+
+    def test_the_full_command_is_still_in_the_document(self):
+        self.assertIn(self.LONG, to_markdown(self.recording()))
+
+    def test_the_full_command_is_in_every_other_format(self):
+        recording = self.recording()
+        self.assertIn(self.LONG, to_text(recording))
+        self.assertIn(self.LONG, to_html(recording))
+        self.assertEqual(json.loads(to_json(recording))["steps"][0]["cmd"],
+                         self.LONG)
+
+    def test_the_html_card_header_is_bounded_too(self):
+        import re as _re
+        page = to_html(self.recording())
+        header = _re.search(r'<span class="cmd mono">([^<]*)</span>', page)
+        self.assertLess(len(header.group(1)), 140)
+
+    def test_a_command_with_no_spaces_is_still_cut(self):
+        heading = self.heading(to_markdown(self.recording("x" * 5000)))
+        self.assertLess(len(heading), 140)
+
+    def test_a_command_that_is_exactly_at_the_limit(self):
+        from sectape.formats import HEADLINE_LIMIT
+        cmd = "a" * HEADLINE_LIMIT
+        self.assertIn(cmd, self.heading(to_markdown(self.recording(cmd))))
+
+
 class TestTextHeader(TempConfig):
     def test_one_command_is_singular(self):
         self.assertIn("(1 command, 0 failed)", to_text(rec(OK_STEP)))

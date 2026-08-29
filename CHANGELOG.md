@@ -239,6 +239,13 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Changed
 
+- **A long command made a heading as long as itself.** Output lines are cut at
+  300 characters but commands were not, so a pasted `curl` with four hundred
+  fields produced an eight-thousand-character markdown heading and an HTML
+  card to match - unreadable, and useless in a table of contents. The heading
+  is shortened at a word boundary now; the command in the block below it, and
+  in every other format, is still complete.
+
 - **A pager at the end of a pipeline left its redrawn screen in the export.**
   Full-screen programs are replaced with a one-line summary, but only the
   first program on the line was considered - so `less /var/log/syslog` was

@@ -187,6 +187,24 @@ def _fence(text: str) -> str:
     return "`" * max(3, _backtick_run(text) + 1)
 
 
+# How much of a command belongs in a heading. The whole of it is still in the
+# block underneath; this is what lands in a table of contents, and a pasted
+# `curl` with four hundred fields makes an eight-thousand-character heading no
+# one can read.
+HEADLINE_LIMIT = 120
+
+
+def _headline(cmd: str, limit: int = HEADLINE_LIMIT) -> str:
+    """A command shortened to something a heading can hold."""
+    text = one_line(cmd)
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(" ", 0, limit - 1)
+    if cut < limit // 2:                    # no sensible word break; hard cut
+        cut = limit - 1
+    return text[:cut].rstrip() + "…"
+
+
 def _inline_code(text: str) -> str:
     """Span-level code that survives backticks in the command line."""
     tick = "`" * max(1, _backtick_run(text) + 1)
@@ -281,7 +299,7 @@ def to_markdown(rec: Recording) -> str:
             _inline_code(step.cwd) if step.cwd else None,
             f"pane {pane_label(step.pane)}" if step.pane and rec.panes > 1 else None,
         ) if m]
-        out.append(f"### {index}. {_inline_code(step.cmd)}"
+        out.append(f"### {index}. {_inline_code(_headline(step.cmd))}"
                    + (" ⚠️" if step.failed else ""))
         out.append("")
         if meta:
@@ -560,7 +578,7 @@ def to_html(rec: Recording) -> str:
             f'<li class="entry step{" failed" if step.failed else ""}">'
             f'<div class="card"><header>'
             f'<span class="num">{index}</span>'
-            f'<span class="cmd mono">{esc(step.cmd)}</span>'
+            f'<span class="cmd mono">{esc(_headline(step.cmd))}</span>'
             f'<span class="meta">{meta}</span></header>'
             f"<pre>{rendered}</pre></div></li>")
     body.append("</ol>")
