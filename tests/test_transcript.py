@@ -481,5 +481,44 @@ class TestSshInsideARecording(TempConfig):
         self.assertEqual(steps[0].source, "heuristic")
 
 
+class TestFullScreenProgramsInAPipeline(TempConfig):
+    """Piping into a pager is how most people meet one."""
+
+    def output_for(self, cmd: str) -> str:
+        raw = begin(cmd, 1.0) + "MANGLED SCREEN REDRAW\r\n" + end(0, 2.0)
+        return parse_transcript(raw)[0].output
+
+    def assert_summarised(self, cmd: str, program: str):
+        self.assertEqual(self.output_for(cmd),
+                         f"<interactive {program} session - "
+                         "screen output not recorded>", cmd)
+
+    def test_a_pager_on_its_own(self):
+        self.assert_summarised("less /var/log/syslog", "less")
+
+    def test_a_pager_at_the_end_of_a_pipeline(self):
+        # git and systemd both set LESS=...X, so the pager stays on the
+        # primary screen and its redraw really does reach the export.
+        self.assert_summarised("cat /var/log/syslog | less", "less")
+        self.assert_summarised("git log --oneline | less -X", "less")
+        self.assert_summarised("journalctl -u nginx | less", "less")
+        self.assert_summarised("dmesg | more", "more")
+
+    def test_an_editor_at_the_end_of_a_pipeline(self):
+        self.assert_summarised("ps aux | vim -", "vim")
+
+    def test_an_ordinary_pipeline_keeps_its_output(self):
+        self.assertEqual(self.output_for("cat f | grep x"),
+                         "MANGLED SCREEN REDRAW")
+
+    def test_the_name_as_an_argument_does_not_count(self):
+        self.assertEqual(self.output_for("echo hi | grep less"),
+                         "MANGLED SCREEN REDRAW")
+
+    def test_the_name_inside_quotes_does_not_count(self):
+        self.assertEqual(self.output_for("echo 'pipe to less' | wc -l"),
+                         "MANGLED SCREEN REDRAW")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,8 @@ from pathlib import Path
 
 from .markers import MARKER_RE, _b64d, capture_width
 from .terminal import VTScreen
-from .text import (FULLSCREEN_CMDS, base_command, clean_terminal_output, redact)
+from .text import (FULLSCREEN_CMDS, base_command, clean_terminal_output,
+                   commands_in, redact)
 
 
 # Commands that only exist to drive the shell or the recorder itself.
@@ -213,11 +214,20 @@ def parse_heuristic_transcript(raw: str) -> list[Step]:
 
 
 def summarise_interactive(steps: list[Step]) -> list[Step]:
-    """Replace redrawn full-screen output with a one-liner."""
+    """Replace redrawn full-screen output with a one-liner.
+
+    Every program on the line is considered, not just the first: piping into
+    a pager is how most people meet one, and `git log | less -X` or
+    `journalctl -u nginx | less` left the redrawn screen in the export
+    because the line began with something else.
+    """
     for step in steps:
-        base = base_command(step.cmd)
-        if base in FULLSCREEN_CMDS:
-            step.output = f"<interactive {base} session - screen output not recorded>"
+        for part in commands_in(step.cmd):
+            base = base_command(part)
+            if base in FULLSCREEN_CMDS:
+                step.output = (f"<interactive {base} session - "
+                               "screen output not recorded>")
+                break
     return steps
 
 

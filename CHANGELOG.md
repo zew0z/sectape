@@ -217,6 +217,13 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Changed
 
+- **A pager at the end of a pipeline left its redrawn screen in the export.**
+  Full-screen programs are replaced with a one-line summary, but only the
+  first program on the line was considered - so `less /var/log/syslog` was
+  handled and `journalctl -u nginx | less` was not, which is how most people
+  actually reach a pager. It matters most for `git log | less` and
+  `systemctl status`, because both set `LESS=...X` and so stay on the primary
+  screen where the redraw really is captured.
 - **The `Programs` summary named only the first program on each line.** A
   session that ran `nmap ... | tee`, `cat | grep | wc` and `curl && jq`
   reported nmap, cat and curl and nothing else, so the summary was wrong about
