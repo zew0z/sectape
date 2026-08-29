@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import termios
 import tempfile
 import time
 import unittest
@@ -218,6 +219,62 @@ class TestRecording(unittest.TestCase):
         self.assertIn("\x1b[?1049l", out, "alt screen not exited")
         self.assertIn("\x1b[?2004l", out, "bracketed paste not disabled")
         self.assertIn("\x1b[?25h", out, "cursor not restored")
+
+    @staticmethod
+    def line_discipline(fd):
+        """The flags that say whether a terminal is in raw mode."""
+        attrs = termios.tcgetattr(fd)
+        return {"ICANON": bool(attrs[3] & termios.ICANON),
+                "ECHO": bool(attrs[3] & termios.ECHO),
+                "ISIG": bool(attrs[3] & termios.ISIG)}
+
+    def assert_terminal_restored(self, ending):
+        """Record, end the session the given way, and check termios came back.
+
+        The failure this project was written for: a shell recorded and a
+        terminal left in raw mode afterwards, with no echo and no Ctrl-C.
+        Every exit path has to put it back.
+        """
+        pid, master = self.spawn("rec", "termios")
+        try:
+            time.sleep(0.3)
+            before = self.line_discipline(master)
+            self.assertTrue(before["ICANON"] and before["ECHO"],
+                            "the test's own terminal did not start cooked")
+            read_until(master, "REC", 25)
+            self.assertTrue(
+                run_until_seen(master, "echo raw-$((11*11))", "raw-121"),
+                "the shell never ran the command")
+            during = self.line_discipline(master)
+            self.assertFalse(any(during.values()),
+                             f"the recorder never entered raw mode: {during}")
+            ending(pid, master)
+            self.reap(pid, 20)
+            self.assertEqual(self.line_discipline(master), before,
+                             "the terminal was left in raw mode")
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
+    def test_the_terminal_is_out_of_raw_mode_after_a_normal_exit(self):
+        def leave(pid, master):
+            os.write(master, b"exit\n")
+            read_until(master, None, 20)
+        self.assert_terminal_restored(leave)
+
+    def test_the_terminal_is_out_of_raw_mode_after_sigterm(self):
+        def leave(pid, master):
+            os.kill(pid, signal.SIGTERM)
+            read_until(master, None, 15)
+        self.assert_terminal_restored(leave)
+
+    def test_the_terminal_is_out_of_raw_mode_after_sighup(self):
+        def leave(pid, master):
+            os.kill(pid, signal.SIGHUP)
+            read_until(master, None, 15)
+        self.assert_terminal_restored(leave)
 
     def test_sigterm_restores_and_still_exports(self):
         pid, master = self.spawn("rec", "term")

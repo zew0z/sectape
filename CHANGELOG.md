@@ -382,6 +382,12 @@ Behaviour an existing setup may notice. Each is described in full below.
   cannot contain, so the proof can only come from the shell having run the
   command. Several short attempts rather than one long wait, which turned out
   to be faster than the sleeps as well as steadier.
+- The failure this project was written for - a terminal left in raw mode after
+  a recording - is now actually asserted. The end-to-end tests said so in their
+  docstring and checked the escape state, but nothing looked at the line
+  discipline, so nothing would have noticed a lost `tcsetattr`. Checked on
+  normal exit, on SIGTERM and on SIGHUP, along with the terminal really being
+  in raw mode during, so the test cannot pass vacuously.
 - The two unclean endings a recording actually meets have end-to-end tests:
   SIGHUP, which is what closing the terminal window sends, and SIGKILL, after
   which nothing is exported at the time and the pane log on disk has to be
