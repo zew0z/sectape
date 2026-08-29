@@ -559,5 +559,67 @@ class TestIgnoringPlumbingOnCompoundLines(TempConfig):
         self.assertEqual(len(steps), 3)
 
 
+class TestLogsFromThePreviousName(TempConfig):
+    """Recordings made before the tool was renamed still have to open.
+
+    Their markers carry the old `THM` payload tag and pre-3.0 logs have no
+    size marker at all, because that recorder never sized its pty.
+    """
+
+    def legacy_log(self):
+        raw = ""
+        for i, (cmd, code) in enumerate([("nmap -sV 10.10.1.1", 0),
+                                         ("cat /etc/passwd | grep root", 0),
+                                         ("hydra -l admin ssh://box", 1)]):
+            raw += legacy_marker("b", b64(cmd), str(1600000000 + i * 10))
+            raw += f"output of {cmd}\r\n"
+            raw += legacy_marker("e", str(code), str(1600000000 + i * 10 + 2),
+                                 b64("/root"))
+        return raw
+
+    def test_the_commands_and_exit_codes_are_read(self):
+        d = self.make_session("legacy", self.legacy_log())
+        steps, _ = collect_steps(d)
+        self.assertEqual([s.cmd for s in steps],
+                         ["nmap -sV 10.10.1.1", "cat /etc/passwd | grep root",
+                          "hydra -l admin ssh://box"])
+        self.assertEqual([s.exit_code for s in steps], [0, 0, 1])
+        self.assertTrue(all(s.source == "marker" for s in steps))
+
+    def test_durations_are_read(self):
+        d = self.make_session("legacy", self.legacy_log())
+        steps, _ = collect_steps(d)
+        self.assertTrue(all(s.duration == 2.0 for s in steps))
+
+    def test_a_log_with_no_size_marker_still_replays(self):
+        # Those recordings were always made at 80 columns.
+        raw = legacy_marker("b", b64("echo hi"), "1.0") + "hi\r\n" \
+            + legacy_marker("e", "0", "1.2", b64("/root"))
+        self.assertEqual(parse_transcript(raw)[0].output, "hi")
+
+    def test_the_listing_count_agrees(self):
+        d = self.make_session("legacy", self.legacy_log())
+        steps, _ = collect_steps(d)
+        self.assertEqual(count_commands(d), len(steps))
+
+    def test_a_pipeline_in_an_old_log_is_read_whole(self):
+        from sectape.cli import _load_recording
+        d = self.make_session("legacy", self.legacy_log())
+        self.assertEqual(_load_recording(d).programs(),
+                         ["nmap", "cat", "grep", "hydra"])
+
+    def test_old_and_new_panes_in_one_session(self):
+        # A directory can hold a pane from before the rename and one from
+        # after, if the label was reused.
+        new = begin("systemctl status app", 1600000100.0) + "active\r\n" \
+            + end(0, 1600000101.0)
+        d = self.make_session("mixed-era", self.legacy_log(), new)
+        steps, panes = collect_steps(d)
+        self.assertEqual(panes, 2)
+        self.assertIn("systemctl status app", [s.cmd for s in steps])
+        self.assertIn("nmap -sV 10.10.1.1", [s.cmd for s in steps])
+        self.assertEqual(count_commands(d), len(steps))
+
+
 if __name__ == "__main__":
     unittest.main()

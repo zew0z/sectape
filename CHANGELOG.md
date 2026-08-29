@@ -365,6 +365,11 @@ Behaviour an existing setup may notice. Each is described in full below.
 - `unittest.main()` sat in the middle of `tests/test_record.py`, so running
   that file directly never reached the bash end-to-end suite.
 - `write_json_atomic` and `write_text_atomic` are one helper.
+- Recordings made before the tool was renamed have proper coverage: their
+  commands, exit codes and durations, a log with no size marker at all, the
+  listing count, a pipeline read whole, and a session directory holding one
+  pane from either era. Every change in this release touches that path, and
+  it had one test.
 - Removed the vestigial `backups/` directory. It was created inside every
   state directory on every run and never written to, so each user had an empty
   directory for a feature that does not exist. Existing ones can be deleted.
