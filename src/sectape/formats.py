@@ -545,6 +545,11 @@ def to_html(rec: Recording) -> str:
             bits.append(esc(human_duration(step.duration)))
         if step.cwd:
             bits.append(esc(step.cwd))
+        # The pane breaks are hidden in the failed-only view, which is exactly
+        # when you are comparing what went wrong across tabs - so each step
+        # carries its own pane, as the markdown export already did.
+        if step.pane and rec.panes > 1:
+            bits.append(esc(f"pane {pane_label(step.pane)}"))
         meta = '<span class="sep">·</span>'.join(f"<span>{b}</span>" for b in bits)
 
         rendered = f'<span class="p">{esc(prompt)}</span> {esc(step.cmd)}'

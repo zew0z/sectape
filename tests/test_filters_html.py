@@ -327,5 +327,47 @@ class TestFilteredNotes(TempConfig):
         self.assertLessEqual(kinds.count("n"), 3)
 
 
+class TestHtmlPaneAttribution(TempConfig):
+    """The failed-only view hides pane breaks, which is exactly when you are
+    comparing what went wrong across tabs."""
+
+    STEPS = [Step(cmd="deploy", exit_code=1, started=100.0, pane="01",
+                  source="marker"),
+             Step(cmd="rollback", exit_code=1, started=102.0, pane="02",
+                  source="marker")]
+
+    def metas(self, page):
+        import re as _re
+        return [" ".join(_re.sub(r"<[^>]+>", " ", m.group(1)).split())
+                for m in _re.finditer(r'<span class="meta">(.*?)</span></header>',
+                                      page)]
+
+    def test_each_step_names_its_pane(self):
+        page = to_html(Recording(label="x", steps=self.STEPS, panes=2))
+        self.assertTrue(any("pane 1" in m for m in self.metas(page)))
+        self.assertTrue(any("pane 2" in m for m in self.metas(page)))
+
+    def test_a_single_pane_session_says_nothing_about_panes(self):
+        page = to_html(Recording(label="x", steps=self.STEPS[:1], panes=1))
+        self.assertNotIn("pane", "".join(self.metas(page)))
+
+    def test_the_attribution_survives_the_pane_breaks_being_hidden(self):
+        # The breaks are display:none in that view, so the step itself has to
+        # carry it.
+        page = to_html(Recording(label="x", steps=self.STEPS, panes=2))
+        self.assertIn("body.failed-only .pane-break", page)
+        for meta in self.metas(page):
+            self.assertIn("pane", meta)
+
+    def test_it_matches_what_markdown_says(self):
+        from sectape.formats import to_markdown
+        recording = Recording(label="x", steps=self.STEPS, panes=2)
+        markdown = to_markdown(recording)
+        page = to_html(recording)
+        for pane in ("pane 1", "pane 2"):
+            self.assertIn(pane, markdown)
+            self.assertIn(pane, page)
+
+
 if __name__ == "__main__":
     unittest.main()

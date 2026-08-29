@@ -205,6 +205,10 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Changed
 
+- **The HTML page lost pane attribution in its failed-only view.** Panes were
+  shown only as separators between steps, and that view hides them - which is
+  exactly when you are comparing what went wrong across tabs. Each step now
+  carries its own pane, as the markdown export already did.
 - **The `text` export gave no sign that panes had changed.** Commands from
   several tabs interleave by time, and with nothing to mark the switch they
   read as one shell running everything in sequence - a `tail -f` in one tab
