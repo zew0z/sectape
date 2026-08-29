@@ -300,6 +300,10 @@ Behaviour an existing setup may notice. Each is described in full below.
 - The documented override precedence has tests: defaults < config file <
   environment < `--state-dir` / `--output-dir` / `--no-redact`, including that
   a `~` in either path flag is expanded.
+- The HTML page is pinned as a single self-contained file: nothing fetched
+  from the network, and every `localStorage` access guarded. An exported page
+  is opened from disk, where the browser refuses storage outright - the
+  toggles have to keep working, and only remembering the choice may be lost.
 - `ui.py` has tests: no escape sequence may reach a pipe, `NO_COLOR` and
   `SECTAPE_COLOR` are honoured, and glyphs fall back to ASCII off a UTF-8
   terminal.

@@ -369,5 +369,46 @@ class TestHtmlPaneAttribution(TempConfig):
             self.assertIn(pane, page)
 
 
+class TestHtmlWorksWithoutStorage(TempConfig):
+    """An exported page is opened from disk, where localStorage is refused.
+
+    Chrome throws SecurityError for `file://` and `data:` documents. The
+    toggles have to keep working; only remembering the choice may be lost.
+    """
+
+    def script(self) -> str:
+        page = to_html(Recording(label="x", panes=1, steps=[
+            Step(cmd="echo hi", exit_code=0, started=1.0, source="marker")]))
+        return page.split("<script>")[1].split("</script>")[0]
+
+    def test_every_storage_read_is_guarded(self):
+        script = self.script()
+        self.assertIn("getItem", script)
+        for call in ("localStorage.getItem", "localStorage.setItem"):
+            index = script.index(call)
+            before = script[max(0, index - 120):index]
+            self.assertIn("try", before,
+                          f"{call} is not inside a try block")
+
+    def test_a_failed_read_does_not_leave_the_toggle_undefined(self):
+        # `load` has to return something falsy rather than propagate.
+        script = self.script()
+        self.assertRegex(script, r"catch\s*\([^)]*\)\s*\{\s*return false")
+
+    def test_the_toggles_are_wired_by_attribute(self):
+        page = to_html(Recording(label="x", panes=1, steps=[
+            Step(cmd="echo hi", exit_code=0, started=1.0, source="marker")]))
+        self.assertIn('data-toggle="wrap"', page)
+        self.assertIn('data-toggle="failed"', page)
+        self.assertIn("[data-toggle]", self.script())
+
+    def test_the_page_needs_nothing_from_the_network(self):
+        # It is handed to people as a single file.
+        page = to_html(Recording(label="x", panes=1, steps=[
+            Step(cmd="echo hi", exit_code=0, started=1.0, source="marker")]))
+        for pattern in ("<script src=", "<link ", "@import", "http://", "https://"):
+            self.assertNotIn(pattern, page, pattern)
+
+
 if __name__ == "__main__":
     unittest.main()
