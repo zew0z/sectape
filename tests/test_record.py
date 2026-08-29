@@ -545,6 +545,42 @@ class TestRecording(unittest.TestCase):
             self.assertNotIn(secret, note.read_text(),
                              "the password reached the export")
 
+    def test_the_pane_log_is_private_whatever_the_umask(self):
+        """The log holds everything the terminal displayed.
+
+        A file created with mode 0600 keeps it whatever the umask, because
+        there are no group or other bits for a umask to have to remove - but
+        that is worth pinning, since a laxer default would not show up on a
+        machine whose umask is already 022.
+        """
+        previous = os.umask(0o000)
+        try:
+            pid, master = self.spawn("rec", "perm")
+            try:
+                read_until(master, "REC", 25)
+                self.assertTrue(
+                    run_until_seen(master, "echo perm-$((13*13))", "perm-169"),
+                    "the shell never ran anything")
+                os.write(master, b"exit\n")
+                read_until(master, None, 20)
+                self.reap(pid)
+            finally:
+                try:
+                    os.close(master)
+                except OSError:
+                    pass
+        finally:
+            os.umask(previous)
+
+        session = self.root / "state" / "sessions" / "perm"
+        log = session / "pane_01.raw"
+        self.assertTrue(log.exists(), sorted(p.name for p in session.iterdir()))
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600,
+                         "the pane log is readable by someone else")
+        self.assertEqual((session / "meta.json").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(session.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.root / "state").stat().st_mode & 0o777, 0o700)
+
     # -- the export --------------------------------------------------------
     def test_export_has_exact_commands_and_exit_codes(self):
         self.session(["echo hello-from-e2e", "false"])
