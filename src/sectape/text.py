@@ -71,8 +71,20 @@ REDACTIONS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
      "<REDACTED: private key>"),
     (re.compile(r"(?i)\b(authorization\s*:\s*)(bearer|basic)\s+[^\s'\"]+"), r"\1\2 <REDACTED>"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "<REDACTED: aws key id>"),
+    # AKIA is a long-lived key; ASIA is the temporary one STS and SSO hand
+    # out, which is what most people actually have in their environment.
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "<REDACTED: aws key id>"),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), "<REDACTED: github token>"),
+    # The fine-grained token, which is the kind GitHub now steers you towards.
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b"), "<REDACTED: github token>"),
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"), "<REDACTED: google api key>"),
+    (re.compile(r"\b[sr]k_(?:live|test)_[0-9A-Za-z]{16,}\b"),
+     "<REDACTED: stripe key>"),
+    (re.compile(r"\bnpm_[0-9A-Za-z]{36}\b"), "<REDACTED: npm token>"),
+    (re.compile(r"\bpypi-[A-Za-z0-9_\-]{32,}\b"), "<REDACTED: pypi token>"),
+    # A password in a URL. The host is worth keeping; the password is not.
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^/\s:@]+:)[^/\s@]+(@)"),
+     r"\1<REDACTED>\2"),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "<REDACTED: slack token>"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"), "<REDACTED: api key>"),
     (re.compile(r"(?i)\b(aws_secret_access_key|api[_-]?key|secret[_-]?key|access[_-]?token|"

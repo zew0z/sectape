@@ -261,6 +261,13 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Added
 
+- Redaction covers the token formats their issuers have since moved to, which
+  the patterns had not caught up with: GitHub's fine-grained `github_pat_`
+  tokens, and AWS `ASIA` temporary keys - the kind STS and SSO hand out, so
+  the kind most people actually have. Also Google, Stripe, npm and PyPI
+  tokens, and a password embedded in a URL, where the host is kept and only
+  the password goes.
+
 - The README told everyone to `pipx install sectape`, which 404s - the package
   is not on PyPI. It now documents installing from a checkout, which is what
   actually works today. Both documented commands were run against a clean

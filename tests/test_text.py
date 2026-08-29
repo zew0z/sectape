@@ -132,5 +132,68 @@ class TestCleaning(TempConfig):
         self.assertEqual(clean_terminal_output(""), "")
 
 
+class TestRedactionOfCurrentTokenFormats(TempConfig):
+    """The built-in patterns are meant to be high confidence, not exhaustive.
+
+    Several of these are the format their issuer now steers people towards,
+    while the pattern only knew the one it replaced.
+    """
+
+    SECRETS = {
+        "github fine-grained pat": "github_pat_11ABCDEFG0" + "abcdefghij" * 6,
+        "github classic pat": "ghp_" + "A" * 36,
+        "aws long-lived key": "AKIAIOSFODNN7EXAMPLE",
+        "aws temporary key": "ASIAIOSFODNN7EXAMPLE",
+        "google api key": "AIzaSy" + "G" * 33,
+        "stripe secret key": "sk_live_" + "H" * 32,
+        "stripe restricted key": "rk_live_" + "H" * 32,
+        "stripe test key": "sk_test_" + "H" * 32,
+        "npm token": "npm_" + "I" * 36,
+        "pypi token": "pypi-AgEIcHlwaS5vcmc" + "J" * 40,
+        "openai key": "sk-" + "D" * 40,
+        "slack bot token": "xoxb-123456789012-abcdefghijkl",
+    }
+
+    ORDINARY = {
+        "a plain url": "curl https://example.com/api",
+        "a url with a port": "curl https://example.com:8080/health",
+        "an ssh remote": "git clone git@github.com:zew0z/sectape.git",
+        "a url with only a user": "psql postgres://readonly@db.internal/app",
+        "the prefix in prose": "AIzaSy is the prefix google uses",
+        "an env var name": "npm_config_registry is an env var",
+        "an scp path": "scp file user@host:/tmp/x",
+        "a short hex string": "commit 4f2a9c1",
+        "a normal sentence": "the deploy key rotated at 09:15",
+    }
+
+    def test_every_shape_is_redacted(self):
+        for name, secret in self.SECRETS.items():
+            self.assertNotIn(secret, redact(f"echo {secret}"), name)
+
+    def test_the_replacement_says_what_it_was(self):
+        self.assertIn("github token", redact(self.SECRETS["github fine-grained pat"]))
+        self.assertIn("aws key id", redact(self.SECRETS["aws temporary key"]))
+
+    def test_ordinary_output_is_left_alone(self):
+        for name, text in self.ORDINARY.items():
+            self.assertEqual(redact(text), text, name)
+
+    def test_a_password_in_a_url_goes_but_the_host_stays(self):
+        out = redact("curl https://user:hunter2@internal.example.com/api")
+        self.assertNotIn("hunter2", out)
+        self.assertIn("internal.example.com", out)
+        self.assertIn("user", out)
+
+    def test_redaction_can_be_turned_off(self):
+        secret = self.SECRETS["aws temporary key"]
+        self.assertEqual(redact(secret, enabled=False), secret)
+
+    def test_a_secret_inside_a_longer_line_is_still_caught(self):
+        line = f"  export TOKEN={self.SECRETS['npm token']}  # for CI"
+        out = redact(line)
+        self.assertNotIn(self.SECRETS["npm token"], out)
+        self.assertIn("# for CI", out)
+
+
 if __name__ == "__main__":
     unittest.main()

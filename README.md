@@ -201,7 +201,8 @@ care as your shell history — more, since they include command *output*.
   so they are not in the log.
 - Anything you `cat`, `echo` or paste **is**.
 - `redact = true` (the default) strips high-confidence secrets — private key
-  blocks, `Authorization:` headers, AWS/GitHub/Slack/OpenAI-shaped tokens —
+  blocks, `Authorization:` headers, passwords embedded in URLs, and tokens
+  shaped like AWS, GitHub, Google, Slack, Stripe, npm, PyPI or OpenAI ones —
   from **exports**, transcript and notes alike. It does not rewrite the raw
   logs or `notes.jsonl`. Add your own patterns under `[redaction]`.
 - The state directory, the recordings in it, the pane logs and your notes
@@ -215,7 +216,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-596 tests, no dependencies. The end-to-end ones drive the real CLI through a
+602 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS
