@@ -290,18 +290,35 @@ class TestFilteredNotes(TempConfig):
         self.assertEqual(len(rec.steps), 12)
         self.assertEqual(len(rec.notes), 12)
 
-    def test_last_n_keeps_only_the_notes_from_those_commands(self):
+    def test_last_n_keeps_the_notes_belonging_to_those_commands(self):
+        # A note belongs to the last command that had started when it was
+        # written, which is the rule the timeline places it by.
         rec = self.filtered(last=2)
-        self.assertEqual(len(rec.steps), 2)
-        self.assertEqual([n["text"] for n in rec.notes], ["note-10"])
+        self.assertEqual([s.cmd for s in rec.steps], ["command-10", "command-11"])
+        self.assertEqual([n["text"] for n in rec.notes], ["note-10", "note-11"])
 
-    def test_the_notes_kept_are_inside_the_retained_span(self):
+    def test_one_command_keeps_its_own_note(self):
+        # Written just after the command, which is when most notes are.
+        rec = self.filtered(last=1)
+        self.assertEqual([s.cmd for s in rec.steps], ["command-11"])
+        self.assertEqual([n["text"] for n in rec.notes], ["note-11"])
+
+    def test_every_note_kept_belongs_to_a_kept_command(self):
         rec = self.filtered(only_failed=True)
-        first = min(s.started for s in rec.steps)
-        last = max(s.started + s.duration for s in rec.steps)
+        starts = sorted(s.started for s in rec.steps)
         for note in rec.notes:
-            self.assertGreaterEqual(note["at"], first)
-            self.assertLessEqual(note["at"], last)
+            owner = max((t for t in starts if t <= note["at"]), default=None)
+            self.assertIsNotNone(owner, note)
+
+    def test_a_note_before_the_first_command_is_not_attached(self):
+        import argparse
+        from sectape.cli import _apply_filters
+        steps = [Step(cmd="c0", started=200.0, duration=1.0, source="marker"),
+                 Step(cmd="c1", started=300.0, duration=1.0, source="marker")]
+        notes = [{"at": 100.0, "text": "before everything"}]
+        rec = Recording(label="x", steps=steps, panes=1, notes=notes)
+        rec = _apply_filters(rec, argparse.Namespace(last=1))
+        self.assertEqual(rec.notes, [])
 
     def test_matching_nothing_keeps_nothing(self):
         rec = self.filtered(grep="no-such-command")

@@ -364,23 +364,37 @@ def _resolve(name: str) -> Path | None:
     return None
 
 
-def _notes_within(steps, notes: list[dict]) -> list[dict]:
-    """The notes written while the given commands were running.
+def _notes_within(kept: list, steps: list, notes: list[dict]) -> list[dict]:
+    """The notes belonging to the commands that were kept.
 
-    A filtered document is about a subset of the session, and keeping every
-    note from the whole of it buried `--last 2` under ten annotations that
-    had nothing to do with the two commands asked for. Steps with no
-    timestamps - a capture read off the screen - give nothing to compare
-    against, so their notes are all kept.
+    A note belongs to the last command that had already started when it was
+    written - the same rule the timeline uses to place it, so a document and
+    its filtered form agree about where a note sits. Keeping every note
+    buried `--last 2` under ten unrelated ones; keeping only those written
+    strictly *during* a command dropped the note you write about what just
+    happened, which is most of them.
+
+    A capture with no timestamps has nothing to match on, so it keeps all of
+    its notes.
     """
-    if not steps:
+    if not kept:
         return []
-    stamps = [s.started for s in steps if s.started]
-    if not stamps:
+    stamped = [step for step in steps if step.started]
+    if not stamped:
         return notes
-    first = min(stamps)
-    last = max(s.started + (s.duration or 0.0) for s in steps if s.started)
-    return [n for n in notes if first <= float(n.get("at") or 0.0) <= last]
+    retained = {id(step) for step in kept}
+    belonging = []
+    for note in notes:
+        at = float(note.get("at") or 0.0)
+        owner = None
+        for step in stamped:
+            if step.started <= at:
+                owner = step
+            else:
+                break
+        if owner is not None and id(owner) in retained:
+            belonging.append(note)
+    return belonging
 
 
 def _apply_filters(rec: Recording, args) -> Recording:
@@ -392,7 +406,7 @@ def _apply_filters(rec: Recording, args) -> Recording:
         drop_output=getattr(args, "no_output", False),
     )
     if len(kept) != len(rec.steps):
-        rec.notes = _notes_within(kept, rec.notes)
+        rec.notes = _notes_within(kept, rec.steps, rec.notes)
     rec.steps = kept
     return rec
 

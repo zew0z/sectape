@@ -278,12 +278,15 @@ Behaviour an existing setup may notice. Each is described in full below.
   switches are marked with a `#` comment, like the header and notes, and only
   when a session has more than one pane.
 
-- **A filtered export carried every note in the session.** `--last 2` came out
+- **A filtered export carried every note in the session, and then too few.** `--last 2` came out
   as ten unrelated annotations followed by the two commands you asked for.
-  Notes are now narrowed with the commands: a filtered document keeps the ones
-  written while those commands were running. An unfiltered export is
-  unchanged, and a capture with no timestamps to compare against keeps all of
-  its notes.
+  Notes are narrowed with the commands now. A note belongs to the last command
+  that had started when it was written - the rule the timeline already places
+  it by - so `--last 2` keeps those two commands and the notes about them.
+  Scoping instead to when a command was actually *running* went too far the
+  other way and dropped the note you write about what just happened, which is
+  most of them. An unfiltered export is unchanged, and a capture with no
+  timestamps to compare against keeps all of its notes.
 
 - **Notes are held to the same size limits as command output.** Output has
   always been trimmed for readability; notes were not, so
