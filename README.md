@@ -74,7 +74,9 @@ sectape doctor             check the install
 
 A filtered `export` is a subset, so it gets its own file — `lab (failed).md`,
 `lab (last 20).md` — rather than overwriting the recording's complete
-document. `-o` still puts it exactly where you say.
+document. `-o` still puts it exactly where you say. Notes are narrowed with
+the commands: a filtered document keeps the notes written while those commands
+were running, not every note in the session.
 
 ## Notes while you work
 
@@ -210,7 +212,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-572 tests, no dependencies. The end-to-end ones drive the real CLI through a
+578 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS

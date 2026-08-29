@@ -361,14 +361,36 @@ def _resolve(name: str) -> Path | None:
     return None
 
 
+def _notes_within(steps, notes: list[dict]) -> list[dict]:
+    """The notes written while the given commands were running.
+
+    A filtered document is about a subset of the session, and keeping every
+    note from the whole of it buried `--last 2` under ten annotations that
+    had nothing to do with the two commands asked for. Steps with no
+    timestamps - a capture read off the screen - give nothing to compare
+    against, so their notes are all kept.
+    """
+    if not steps:
+        return []
+    stamps = [s.started for s in steps if s.started]
+    if not stamps:
+        return notes
+    first = min(stamps)
+    last = max(s.started + (s.duration or 0.0) for s in steps if s.started)
+    return [n for n in notes if first <= float(n.get("at") or 0.0) <= last]
+
+
 def _apply_filters(rec: Recording, args) -> Recording:
-    rec.steps = filter_steps(
+    kept = filter_steps(
         rec.steps,
         only_failed=getattr(args, "only_failed", False),
         last=getattr(args, "last", None),
         grep=getattr(args, "grep", "") or "",
         drop_output=getattr(args, "no_output", False),
     )
+    if len(kept) != len(rec.steps):
+        rec.notes = _notes_within(kept, rec.notes)
+    rec.steps = kept
     return rec
 
 

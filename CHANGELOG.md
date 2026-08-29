@@ -205,6 +205,13 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Changed
 
+- **A filtered export carried every note in the session.** `--last 2` came out
+  as ten unrelated annotations followed by the two commands you asked for.
+  Notes are now narrowed with the commands: a filtered document keeps the ones
+  written while those commands were running. An unfiltered export is
+  unchanged, and a capture with no timestamps to compare against keeps all of
+  its notes.
+
 - **Notes are held to the same size limits as command output.** Output has
   always been trimmed for readability; notes were not, so
   `cat big.log | sectape note` put the whole file into every export - 849 KB

@@ -265,5 +265,67 @@ class TestFilteredExportKeepsItsOwnFile(TempConfig):
             "lab (failed).html")
 
 
+class TestFilteredNotes(TempConfig):
+    """A filtered document is about a subset; its notes should be too.
+
+    Keeping every note from the whole session buried `--last 2` under ten
+    annotations that had nothing to do with the two commands asked for.
+    """
+
+    def fresh(self):
+        steps = [Step(cmd=f"command-{i}", output="out",
+                      exit_code=0 if i % 4 else 1,
+                      started=100.0 + i * 10, duration=1.0, source="marker")
+                 for i in range(12)]
+        notes = [{"at": 105.0 + i * 10, "text": f"note-{i}"} for i in range(12)]
+        return Recording(label="x", steps=steps, panes=1, notes=notes)
+
+    def filtered(self, **kw):
+        import argparse
+        from sectape.cli import _apply_filters
+        return _apply_filters(self.fresh(), argparse.Namespace(**kw))
+
+    def test_an_unfiltered_recording_keeps_every_note(self):
+        rec = self.filtered()
+        self.assertEqual(len(rec.steps), 12)
+        self.assertEqual(len(rec.notes), 12)
+
+    def test_last_n_keeps_only_the_notes_from_those_commands(self):
+        rec = self.filtered(last=2)
+        self.assertEqual(len(rec.steps), 2)
+        self.assertEqual([n["text"] for n in rec.notes], ["note-10"])
+
+    def test_the_notes_kept_are_inside_the_retained_span(self):
+        rec = self.filtered(only_failed=True)
+        first = min(s.started for s in rec.steps)
+        last = max(s.started + s.duration for s in rec.steps)
+        for note in rec.notes:
+            self.assertGreaterEqual(note["at"], first)
+            self.assertLessEqual(note["at"], last)
+
+    def test_matching_nothing_keeps_nothing(self):
+        rec = self.filtered(grep="no-such-command")
+        self.assertEqual(rec.steps, [])
+        self.assertEqual(rec.notes, [])
+
+    def test_a_capture_with_no_timestamps_keeps_its_notes(self):
+        # Nothing to compare against, so narrowing them would be guesswork.
+        import argparse
+        from sectape.cli import _apply_filters
+        steps = [Step(cmd=f"c{i}") for i in range(4)]
+        notes = [{"at": 100.0 + i, "text": f"n{i}"} for i in range(4)]
+        rec = Recording(label="x", steps=steps, panes=1, notes=notes)
+        rec = _apply_filters(rec, argparse.Namespace(last=2))
+        self.assertEqual(len(rec.steps), 2)
+        self.assertEqual(len(rec.notes), 4)
+
+    def test_notes_still_read_in_order_around_the_kept_commands(self):
+        rec = self.filtered(last=3)
+        kinds = "".join("S" if kind == "step" else "n"
+                        for kind, _ in rec.timeline())
+        self.assertEqual(kinds.count("S"), 3)
+        self.assertLessEqual(kinds.count("n"), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
