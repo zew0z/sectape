@@ -217,6 +217,14 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Changed
 
+- **The `Programs` summary named only the first program on each line.** A
+  session that ran `nmap ... | tee`, `cat | grep | wc` and `curl && jq`
+  reported nmap, cat and curl and nothing else, so the summary was wrong about
+  what the session had actually used. Lines are split on shell operators now.
+  The split is done on tokens, so a pipe inside quotes - `grep 'a|b'`,
+  `awk -F'|'` - stays an argument, and a line that will not tokenise is left
+  whole.
+
 - **The HTML page lost pane attribution in its failed-only view.** Panes were
   shown only as separators between steps, and that view hides them - which is
   exactly when you are comparing what went wrong across tabs. Each step now

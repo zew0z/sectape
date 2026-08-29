@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 
 from . import config
 
@@ -38,6 +39,39 @@ TRIVIAL_CMDS = {
     "for", "while", "until", "if", "case", "select", "function", "do", "then",
     "elif", "else", "fi", "done", "esac", "time", "{", "(",
 }
+
+
+# Shell operators that put one program after another on the same line.
+COMMAND_SEPARATORS = frozenset({"|", "||", "&&", ";", "&", "|&"})
+
+
+def commands_in(line: str) -> list[str]:
+    """The separate commands in one typed line.
+
+    `cat f | grep x` runs two programs, and a summary naming only the first
+    is wrong about what the session used. Splitting happens on tokens, so a
+    pipe inside quotes - `awk -F'|'`, `grep 'a|b'` - is an argument and not a
+    separator. A line that will not tokenise at all is left whole.
+    """
+    text = str(line or "")
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return [text]
+    segments: list[str] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in COMMAND_SEPARATORS:
+            if current:
+                segments.append(" ".join(current))
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(" ".join(current))
+    return segments or [text]
 
 
 def base_command(cmd: str) -> str:

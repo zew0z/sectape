@@ -644,6 +644,24 @@ class TestRecordingSummary(unittest.TestCase):
     def test_an_empty_recording_has_no_elapsed_time(self):
         self.assertEqual(rec().wall_time, 0.0)
 
+    def test_programs_include_the_whole_pipeline(self):
+        # A summary naming only the first program is wrong about what the
+        # session used - `tee`, `wc` and `jq` were all invisible.
+        r = rec(Step(cmd="nmap -sV host | tee scan.txt"),
+                Step(cmd="cat log | grep ERROR | wc -l"),
+                Step(cmd="curl -s /health && jq .status"))
+        self.assertEqual(r.programs(),
+                         ["nmap", "tee", "cat", "grep", "wc", "curl", "jq"])
+
+    def test_a_quoted_pipe_is_not_a_second_program(self):
+        r = rec(Step(cmd="grep 'a|b' notes.txt"),
+                Step(cmd="awk -F'|' '{print $2}' data.csv"))
+        self.assertEqual(r.programs(), ["grep", "awk"])
+
+    def test_shell_keywords_in_a_compound_line_are_still_skipped(self):
+        self.assertEqual(rec(Step(cmd="for i in 1 2; do echo $i; done")).programs(),
+                         [])
+
     def test_programs_preserve_first_use_order(self):
         r = rec(Step(cmd="nmap a"), Step(cmd="curl b"), Step(cmd="nmap c"))
         self.assertEqual(r.programs(), ["nmap", "curl"])

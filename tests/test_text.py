@@ -1,7 +1,8 @@
 import unittest
 
 from sectape import config
-from sectape.text import base_command, clean_terminal_output, redact
+from sectape.text import (base_command, clean_terminal_output, commands_in,
+                          redact)
 from tests.helpers import TempConfig
 
 
@@ -193,6 +194,42 @@ class TestRedactionOfCurrentTokenFormats(TempConfig):
         out = redact(line)
         self.assertNotIn(self.SECRETS["npm token"], out)
         self.assertIn("# for CI", out)
+
+
+class TestCommandsInALine(unittest.TestCase):
+    """One typed line can run several programs."""
+
+    def test_a_single_command(self):
+        self.assertEqual(commands_in("ls -la"), ["ls -la"])
+
+    def test_a_pipeline(self):
+        self.assertEqual(commands_in("cat f | grep x"), ["cat f", "grep x"])
+
+    def test_a_pipeline_without_spaces(self):
+        self.assertEqual(commands_in("cat f|grep x"), ["cat f", "grep x"])
+
+    def test_every_separator(self):
+        for line, count in (("a && b", 2), ("a || b", 2), ("a ; b", 2),
+                            ("a | b | c", 3), ("sleep 1 &", 1)):
+            self.assertEqual(len(commands_in(line)), count, line)
+
+    def test_a_pipe_inside_quotes_is_an_argument(self):
+        self.assertEqual(commands_in("grep 'a|b' notes.txt"),
+                         ["grep a|b notes.txt"])
+
+    def test_an_option_value_containing_a_pipe(self):
+        self.assertEqual(len(commands_in("awk -F'|' '{print $2}' data.csv")), 1)
+
+    def test_a_line_that_will_not_tokenise_is_left_whole(self):
+        line = 'echo "unbalanced'
+        self.assertEqual(commands_in(line), [line])
+
+    def test_a_redirection_is_not_a_separator(self):
+        self.assertEqual(commands_in("sudo tee /etc/hosts < in.txt"),
+                         ["sudo tee /etc/hosts < in.txt"])
+
+    def test_empty_input(self):
+        self.assertEqual(commands_in(""), [""])
 
 
 if __name__ == "__main__":

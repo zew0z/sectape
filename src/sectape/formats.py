@@ -17,7 +17,7 @@ from pathlib import Path
 from . import __version__ as VERSION
 from . import config
 from .session import pane_label
-from .text import TRIVIAL_CMDS, base_command
+from .text import TRIVIAL_CMDS, base_command, commands_in
 from .transcript import Step
 from .util import (human_duration, one_line, plural, safe_filename,
                    umask_mode, write_text_atomic)
@@ -145,12 +145,13 @@ class Recording:
         """Distinct programs run, in first-use order."""
         seen: list[str] = []
         for step in self.steps:
-            name = base_command(step.cmd)
-            if not name or name in seen:
-                continue
-            if not include_trivial and name in TRIVIAL_CMDS:
-                continue
-            seen.append(name)
+            for part in commands_in(step.cmd):
+                name = base_command(part)
+                if not name or name in seen:
+                    continue
+                if not include_trivial and name in TRIVIAL_CMDS:
+                    continue
+                seen.append(name)
         return seen
 
     def to_dict(self) -> dict:
