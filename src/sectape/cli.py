@@ -23,7 +23,8 @@ from .session import (add_note, allocate_pane, clear_session_if_idle,
 from .terminal import current_size
 from .text import redact, trim_for_export
 from .transcript import collect_steps, count_commands
-from .util import (human_duration, one_line, pid_alive, plural,
+from .util import (LABEL_LIMIT, human_duration, one_line, pid_alive,
+                   plural,
                    safe_filename, short_path, slugify,
                    write_json_atomic)
 
@@ -100,7 +101,8 @@ def cmd_rec(args) -> int:
               f"or {u.bold('exit')} first.")
         return 1
 
-    label = one_line(" ".join(args.label)) if args.label else _default_label()
+    label = (one_line(" ".join(args.label), LABEL_LIMIT) if args.label
+             else _default_label())
     slug = slugify(label)
     session_dir = ensure_session_dir(config.settings.sessions_dir / slug)
 

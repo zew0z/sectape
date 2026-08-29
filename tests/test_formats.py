@@ -627,6 +627,40 @@ class TestLongCommandHeadings(TempConfig):
         self.assertIn(cmd, self.heading(to_markdown(self.recording(cmd))))
 
 
+class TestLongLabels(TempConfig):
+    """A label reaches the title, the frontmatter and the HTML <title>."""
+
+    LONG = "incident " + "x" * 4000
+
+    def recording(self, label):
+        return rec(Step(cmd="ls", exit_code=0, started=1.0, source="marker"),
+                   label=label)
+
+    def test_the_document_title_is_bounded(self):
+        md = to_markdown(self.recording(self.LONG))
+        title = [l for l in md.split("\n") if l.startswith("# ")][0]
+        self.assertLess(len(title), 130, len(title))
+
+    def test_the_html_title_is_bounded(self):
+        page = to_html(self.recording(self.LONG))
+        title = page.split("<title>")[1].split("</title>")[0]
+        self.assertLessEqual(len(title), 120)
+
+    def test_the_frontmatter_stays_one_line(self):
+        md = to_markdown(self.recording(self.LONG))
+        label_lines = [l for l in md.split("\n") if l.startswith("label:")]
+        self.assertEqual(len(label_lines), 1)
+        self.assertLess(len(label_lines[0]), 140)
+
+    def test_an_ordinary_label_is_untouched(self):
+        md = to_markdown(self.recording("cert renewal"))
+        self.assertIn("# cert renewal", md)
+
+    def test_the_bound_matches_the_filename_bound(self):
+        from sectape.util import LABEL_LIMIT, safe_filename
+        self.assertEqual(len(safe_filename("z" * 500)), LABEL_LIMIT)
+
+
 class TestTextHeader(TempConfig):
     def test_one_command_is_singular(self):
         self.assertIn("(1 command, 0 failed)", to_text(rec(OK_STEP)))

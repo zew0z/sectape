@@ -239,6 +239,12 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Changed
 
+- **A long label made a title as long as itself.** The export filename was
+  capped at 120 characters and the session directory at 80, but the label
+  itself reached the document title, the YAML frontmatter and the HTML
+  `<title>` with no bound at all - so a label built from a command
+  substitution gave a four-thousand-character heading. Capped at the same
+  length as its own filename.
 - **A long command made a heading as long as itself.** Output lines are cut at
   300 characters but commands were not, so a pasted `curl` with four hundred
   fields produced an eight-thousand-character markdown heading and an HTML

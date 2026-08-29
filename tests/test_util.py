@@ -72,6 +72,20 @@ class TestOneLine(unittest.TestCase):
     def test_ordinary_text_is_untouched(self):
         self.assertEqual(one_line("cert renewal"), "cert renewal")
 
+    def test_no_limit_by_default(self):
+        self.assertEqual(len(one_line("x" * 500)), 500)
+
+    def test_a_limit_shortens_and_marks(self):
+        out = one_line("x" * 500, 40)
+        self.assertEqual(len(out), 40)
+        self.assertTrue(out.endswith("…"))
+
+    def test_text_within_the_limit_is_unchanged(self):
+        self.assertEqual(one_line("short", 40), "short")
+
+    def test_text_exactly_at_the_limit_is_unchanged(self):
+        self.assertEqual(one_line("y" * 40, 40), "y" * 40)
+
 
 class TestSafeFilename(unittest.TestCase):
     def test_stays_one_path_component(self):

@@ -19,7 +19,8 @@ from . import config
 from .session import pane_label
 from .text import TRIVIAL_CMDS, base_command, commands_in
 from .transcript import Step
-from .util import (human_duration, one_line, plural, safe_filename,
+from .util import (LABEL_LIMIT, human_duration, one_line, plural,
+                   safe_filename,
                    umask_mode, write_text_atomic)
 
 GEN_BEGIN = "<!-- sectape:begin -->"
@@ -34,7 +35,7 @@ class Recording:
                  shell: str = "", host: str = "", notes: list[dict] | None = None):
         # Defensive: a recording made before labels were normalised still has
         # to produce a document with one heading in it.
-        self.label = one_line(label) or "session"
+        self.label = one_line(label, LABEL_LIMIT) or "session"
         self.steps = steps
         self.panes = panes
         self.started = started

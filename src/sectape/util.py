@@ -28,14 +28,24 @@ def slugify(text: str) -> str:
     return f"session-{digest}"
 
 
-def one_line(text) -> str:
-    """Collapse any run of whitespace to a single space.
+# How long a session label may be. Its filename is already capped at 120 and
+# its directory at 80; the label itself reached the document title, the YAML
+# frontmatter and the HTML <title> unbounded, so a label built from a command
+# substitution gave a four-thousand-character heading.
+LABEL_LIMIT = 120
+
+
+def one_line(text, limit: int | None = None) -> str:
+    """Collapse any run of whitespace to a single space, optionally bounded.
 
     A label is a heading, a filename and a row in a listing, and none of those
     survive a newline in the middle of them - `sectape rec "$(some-command)"`
     is all it takes.
     """
-    return " ".join(str(text or "").split())
+    collapsed = " ".join(str(text or "").split())
+    if limit is not None and len(collapsed) > limit:
+        return collapsed[:limit - 1].rstrip() + "…"
+    return collapsed
 
 
 def safe_filename(text: str, fallback: str = "untitled") -> str:
