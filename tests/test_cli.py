@@ -9,7 +9,8 @@ import sys
 import unittest
 
 from sectape import __version__, config
-from sectape.cli import build_parser, cmd_list, main, snapshot
+from sectape.cli import (_confirm, build_parser, cmd_list, main,
+                         snapshot)
 from sectape.ui import display_width, fit
 from tests.helpers import TempConfig, begin, end
 
@@ -569,6 +570,46 @@ class TestGlobalOverrides(TempConfig):
                   "config", "show", env=env).stdout
         self.assertIn(str(target), out)
         self.assertNotIn(str(self.root / "from-file"), out)
+
+
+class TestConfirm(unittest.TestCase):
+    """The y/N prompt that gates stopping panes other terminals are using."""
+
+    def ask(self, answer, default=False, tty=True):
+        import unittest.mock as mock
+        with mock.patch("sectape.cli.sys.stdin") as stdin:
+            stdin.isatty.return_value = tty
+            with mock.patch("builtins.input", side_effect=answer):
+                return _confirm("Stop them too?", default=default)
+
+    def test_a_plain_yes(self):
+        for answer in ("y", "Y", "yes", "YES", " yes "):
+            self.assertTrue(self.ask([answer]), answer)
+
+    def test_anything_else_is_no(self):
+        for answer in ("n", "no", "nope", "maybe", "1", "yeah"):
+            self.assertFalse(self.ask([answer]), answer)
+
+    def test_an_empty_answer_takes_the_default(self):
+        self.assertFalse(self.ask([""], default=False))
+        self.assertTrue(self.ask([""], default=True))
+
+    def test_end_of_input_is_no(self):
+        self.assertFalse(self.ask(EOFError()))
+
+    def test_an_interrupt_is_no_even_when_the_default_is_yes(self):
+        # Ctrl-C at a prompt must never be read as consent.
+        self.assertFalse(self.ask(KeyboardInterrupt(), default=True))
+
+    def test_without_a_terminal_it_never_asks(self):
+        # Piped or scripted: take the default rather than block on input.
+        import unittest.mock as mock
+        with mock.patch("sectape.cli.sys.stdin") as stdin:
+            stdin.isatty.return_value = False
+            with mock.patch("builtins.input",
+                            side_effect=AssertionError("must not prompt")):
+                self.assertFalse(_confirm("q", default=False))
+                self.assertTrue(_confirm("q", default=True))
 
 
 class TestColumnFitting(unittest.TestCase):

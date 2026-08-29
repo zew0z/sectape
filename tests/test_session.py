@@ -327,5 +327,43 @@ class TestStateTreePermissions(TempConfig):
         self.assertEqual(self.mode(session_dir / "meta.json"), 0o600)
 
 
+class TestClearingOnlyYourOwnSession(TempConfig):
+    """A recorder tears down after deregistering, and by then the session it
+    was recording may already have been replaced."""
+
+    def write(self, slug: str, panes=None):
+        write_json_atomic(config.settings.current_session_file, {
+            "label": slug, "slug": slug,
+            "dir": str(self.sessions / slug),
+            "started": 1700000000.0, "panes": panes or {}})
+
+    def test_a_stale_recorder_does_not_clear_the_new_session(self):
+        # It used to delete whatever was current, and the pane allocation
+        # that followed rebuilt the file from nothing - so the new recording
+        # lost its label and directory and never reached an export.
+        self.write("beta")
+        self.assertFalse(clear_session_if_idle("alpha"))
+        self.assertTrue(config.settings.current_session_file.exists())
+        self.assertEqual(read_session()["label"], "beta")
+
+    def test_a_recorder_clears_its_own_session(self):
+        self.write("beta")
+        self.assertTrue(clear_session_if_idle("beta"))
+        self.assertFalse(config.settings.current_session_file.exists())
+
+    def test_no_slug_given_still_clears_an_idle_session(self):
+        self.write("beta")
+        self.assertTrue(clear_session_if_idle())
+        self.assertFalse(config.settings.current_session_file.exists())
+
+    def test_a_session_with_a_live_pane_is_never_cleared(self):
+        self.write("beta", {"01": {"pid": os.getpid(), "log": "a.raw"}})
+        self.assertFalse(clear_session_if_idle("beta"))
+        self.assertTrue(config.settings.current_session_file.exists())
+
+    def test_clearing_when_there_is_no_session_is_harmless(self):
+        self.assertFalse(clear_session_if_idle("anything"))
+
+
 if __name__ == "__main__":
     unittest.main()

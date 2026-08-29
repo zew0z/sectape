@@ -65,7 +65,7 @@ def _load_recording(session_dir: Path, label: str | None = None,
     )
 
 
-def _release_pane(pane_id: str, verb: str) -> int:
+def _release_pane(pane_id: str, verb: str, recorded: dict | None = None) -> int:
     """Deregister a finished pane and, if it was the last one, end the session.
 
     Both `rec` and `attach` end this way. When only `rec` did, leaving the
@@ -81,10 +81,12 @@ def _release_pane(pane_id: str, verb: str) -> int:
               f"{u.grey('when the session is finished')}")
         return 0
     print()
-    session = read_session()
+    # Finish the session this pane was recording, not whatever is current by
+    # now - starting a different recording replaces it while we tear down.
+    session = recorded or read_session()
     if session:
         _finish(session, quiet=False)
-        clear_session_if_idle()
+        clear_session_if_idle(session.get("slug"))
     return 0
 
 
@@ -147,7 +149,8 @@ def cmd_rec(args) -> int:
         print(f"    {u.grey('start a separate recording with a new label, or')} "
               f"{u.bold('sectape rm ' + slug)} {u.grey('first')}")
 
-    write_session_meta(session_dir, read_session() or {})
+    recorded = read_session() or {}
+    write_session_meta(session_dir, recorded)
     pane_id, pane_log = allocate_pane(session_dir)
 
     rows, cols, _, _ = current_size()
@@ -167,7 +170,7 @@ def cmd_rec(args) -> int:
 
     record_pty(pane_log, banner, no_integration=no_integration)
 
-    return _release_pane(pane_id, "stopped")
+    return _release_pane(pane_id, "stopped", recorded)
 
 
 def cmd_attach(args) -> int:
@@ -199,7 +202,7 @@ def cmd_attach(args) -> int:
     record_pty(pane_log, banner,
                no_integration=args.no_integration or not config.settings.shell_integration)
 
-    return _release_pane(pane_id, "detached")
+    return _release_pane(pane_id, "detached", session)
 
 
 def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:

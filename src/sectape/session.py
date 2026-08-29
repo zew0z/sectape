@@ -102,9 +102,21 @@ def unregister_pane(pane_id: str) -> int:
 # --------------------------------------------------------------------------
 
 
-def clear_session_if_idle() -> bool:
+def clear_session_if_idle(slug: str | None = None) -> bool:
+    """Remove the current session file once none of its panes are left.
+
+    A recorder is still tearing down - exporting, tidying - after it has
+    deregistered its pane, and by then the session it was recording may have
+    been replaced: `sectape rec other-label` waits only for the registry to
+    empty. Clearing whatever happened to be current deleted the *new*
+    session's file, and the pane allocation that followed rebuilt it from
+    nothing, so the new recording lost its label and its directory and never
+    reached an export. Pass the slug to only ever clear your own.
+    """
     def _fn(data):
         if not data:
+            return False
+        if slug is not None and data.get("slug") != slug:
             return False
         prune_dead_panes(data)
         return not data.get("panes")

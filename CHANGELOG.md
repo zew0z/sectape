@@ -120,6 +120,15 @@ Behaviour an existing setup may notice. Each is described in full below.
   those survive a line break in the middle - `sectape rec "$(some-command)"`
   is all it takes. Labels are collapsed to a single line. The YAML frontmatter
   was already quoted correctly and is unchanged.
+- **Starting a different recording could lose the new one's export.** A
+  recorder keeps working after it deregisters its pane - exporting, tidying -
+  and `sectape rec other-label` waits only for the pane registry to empty, so
+  the two overlap. In that window the old recorder finished and cleared
+  *whatever session was current*, which by then was the new one: its state
+  file was deleted, the pane allocation that followed rebuilt it from nothing,
+  and the new recording lost its label and its directory and exported nothing
+  at all. A recorder now finishes and clears only the session it was
+  recording.
 - **`attach` never finished a session.** Only `rec` closed a recording, so
   leaving the first tab before the attached one left no panes, no export and
   a `current.json` still claiming to be live — the whole recording was lost.

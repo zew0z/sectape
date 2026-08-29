@@ -273,6 +273,82 @@ class TestRecording(unittest.TestCase):
         self.assertIn("integration off", self.banner_of("rec", "no-hooks"),
                       "the banner promised hooks a plain sh cannot have")
 
+    def test_recording_a_different_label_stops_the_live_session_first(self):
+        # There is one pane registry, so a recorder left running from the old
+        # session would later deregister itself out of the *new* session's
+        # registry. It has to be stopped, and its work exported, first.
+        state = self.root / "state"
+        first_pid, first = self.spawn("rec", "alpha")
+        try:
+            read_until(first, "REC", 25)
+            time.sleep(1.2)
+            os.write(first, b"echo alpha-work\n")
+            time.sleep(0.8)
+
+            second_pid, second = self.spawn("rec", "beta")
+            sink = []
+            try:
+                # `alpha` is signalled the moment `beta` starts, and a
+                # recorder cannot finish while its terminal is not being
+                # read - a real one always is, so drain both here.
+                def settle(seconds):
+                    deadline = time.time() + seconds
+                    while time.time() < deadline:
+                        read_until(first, None, 0.1)
+                        read_until(second, None, 0.1, sink)
+
+                read_until(second, "REC", 25, sink)
+                settle(1.5)
+                os.write(second, b"echo beta-work\n")
+                settle(1.0)
+                os.write(second, b"exit\n")
+                deadline = time.time() + 20
+                while time.time() < deadline:
+                    done, _ = os.waitpid(second_pid, os.WNOHANG)
+                    if done:
+                        break
+                    settle(0.3)
+                else:
+                    self.reap(second_pid, 5)
+            finally:
+                try:
+                    os.close(second)
+                except OSError:
+                    pass
+
+            self.assertIn("stopping it first", "".join(sink),
+                          "the live session was taken over silently")
+            deadline = time.time() + 20
+            stopped = False
+            while time.time() < deadline:
+                done, _ = os.waitpid(first_pid, os.WNOHANG)
+                if done:
+                    stopped = True
+                    break
+                read_until(first, None, 0.2)
+            if not stopped:
+                os.kill(first_pid, signal.SIGKILL)
+                os.waitpid(first_pid, 0)
+            self.assertTrue(stopped, "the old recorder was left running")
+        finally:
+            try:
+                os.close(first)
+            except OSError:
+                pass
+
+        # Both sessions kept their own work, in their own document.
+        alpha = self.exports / "alpha.md"
+        beta = self.exports / "beta.md"
+        self.assertTrue(alpha.exists(),
+                        sorted(p.name for p in self.exports.iterdir()))
+        self.assertTrue(beta.exists(),
+                        sorted(p.name for p in self.exports.iterdir()))
+        self.assertIn("echo alpha-work", alpha.read_text())
+        self.assertIn("echo beta-work", beta.read_text())
+        self.assertNotIn("echo beta-work", alpha.read_text(),
+                         "the two sessions were mixed together")
+        self.assertFalse((state / "current.json").exists())
+
     # -- the export --------------------------------------------------------
     def test_export_has_exact_commands_and_exit_codes(self):
         self.session(["echo hello-from-e2e", "false"])
