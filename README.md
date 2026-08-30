@@ -150,6 +150,8 @@ first clause. If you have disabled bash history, command text falls back to
   including on `SIGTERM`/`SIGHUP`.
 - Progress bars, `\r` redraws and readline autosuggestions resolve to their
   final on-screen state instead of appearing as garbage.
+- A command you type while the last one is still running is recorded as the
+  command it is, not as the output of the one you were waiting for.
 - Full-screen programs (`vim`, `less`, `top`, `man`, …) are recorded as a
   one-line summary rather than a mangled screen dump.
 - Multiple panes can record into one session; the session ends with the last
@@ -227,7 +229,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-712 tests, no dependencies. The end-to-end ones drive the real CLI through a
+719 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS

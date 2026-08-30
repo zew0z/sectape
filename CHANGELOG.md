@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **A command typed while the last one was still running was recorded as that
+  command's output.** A terminal echoes what you type as you type it, so
+  starting something slow - a scan, a build, a `sleep` - and typing the next
+  command while you wait puts those keystrokes inside the running command's
+  output. `sleep 3` came out of a real recording with `echo ...` as its entire
+  output, and that command then appeared again as the step below it. Only a
+  run of lines at the very end, matching the commands that follow in the order
+  they were typed, is taken, and nothing is lost by taking it: every line
+  removed is the text of a step still in the document, directly underneath, as
+  its own command. Recordings read off the screen are left alone, having no
+  separate echo to remove.
+
 - **The same recording came out in two different orders depending on `-f`.**
   A pane recorded without shell integration has no markers, so its commands
   carry no timestamps. The timeline that markdown, text and HTML are built

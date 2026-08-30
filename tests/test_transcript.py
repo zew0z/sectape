@@ -396,6 +396,62 @@ class TestACommandWhoseEndMarkerNeverArrived(TempConfig):
         self.assertEqual(steps[0].output, "interrupted")
 
 
+class TestTypedAheadEcho(TempConfig):
+    """A terminal echoes what you type while the last command is still running.
+
+    Start something slow and type the next command while you wait, and those
+    keystrokes land inside the running command's output region. `sleep 3` came
+    out of the parser with the next command as its entire output.
+    """
+
+    def test_the_next_command_is_not_this_command_s_output(self):
+        raw = (begin("sleep 3") + "echo typed-during-the-sleep\r\n" + end(0)
+               + begin("echo typed-during-the-sleep") + "typed-during-the-sleep\r\n"
+               + end(0))
+        steps = parse_transcript(raw)
+        self.assertEqual(steps[0].output, "")
+        self.assertEqual(steps[1].output, "typed-during-the-sleep")
+
+    def test_several_commands_typed_ahead_are_all_taken(self):
+        raw = (begin("sleep 5") + "real output\r\nsecond cmd\r\nthird cmd\r\n" + end(0)
+               + begin("second cmd") + "b\r\n" + end(0)
+               + begin("third cmd") + "c\r\n" + end(0))
+        self.assertEqual(parse_transcript(raw)[0].output, "real output")
+
+    def test_a_command_typed_ahead_of_an_ignored_one_still_goes(self):
+        # `sectape note` is dropped from the document, but it echoes like
+        # anything else, so the run has to be matched before that filter.
+        raw = (begin("sleep 5") + "sectape note 'x'\r\n" + end(0)
+               + begin("sectape note 'x'") + "noted\r\n" + end(0))
+        steps = parse_transcript(raw)
+        self.assertEqual([s.cmd for s in steps], ["sleep 5"])
+        self.assertEqual(steps[0].output, "")
+
+    def test_output_that_merely_resembles_the_next_command_in_the_middle_stays(self):
+        # Only a run at the very end is an echo. The same text earlier in the
+        # output is something the command printed.
+        raw = (begin("cat notes") + "echo hello\r\nand more after it\r\n" + end(0)
+               + begin("echo hello") + "hello\r\n" + end(0))
+        self.assertEqual(parse_transcript(raw)[0].output,
+                         "echo hello\nand more after it")
+
+    def test_an_unrelated_last_line_is_left_alone(self):
+        raw = (begin("ls") + "notes.txt\r\n" + end(0)
+               + begin("cat notes.txt") + "hello\r\n" + end(0))
+        self.assertEqual(parse_transcript(raw)[0].output, "notes.txt")
+
+    def test_the_last_command_in_a_log_keeps_its_output(self):
+        raw = begin("echo done") + "done\r\n" + end(0)
+        self.assertEqual(parse_transcript(raw)[0].output, "done")
+
+    def test_a_scraped_transcript_is_left_alone(self):
+        # Without markers the command text is itself read off the screen, so
+        # there is no separate echo to remove and no exact text to trust.
+        raw = "user@host:~$ sleep 3\r\nuser@host:~$ echo hi\r\nhi\r\n"
+        steps = parse_transcript(raw)
+        self.assertTrue(all(s.source == "heuristic" for s in steps))
+
+
 class TestDeduplication(unittest.TestCase):
     def test_the_same_command_run_twice_is_kept(self):
         # Two marker pairs are proof the command really ran twice; only the

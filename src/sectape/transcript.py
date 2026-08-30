@@ -156,6 +156,42 @@ def _clean(text: str, do_redact: bool = True) -> str:
     return clean_terminal_output(redact(text, do_redact))
 
 
+# How far ahead to look for a command that was typed early. Typing three or
+# four commands ahead happens; a hundred does not, and an unbounded search
+# would be quadratic on a long recording.
+TYPEAHEAD_LOOKAHEAD = 5
+
+
+def _strip_typed_ahead(steps: list[Step], do_redact: bool = True) -> list[Step]:
+    """Drop the echo of commands typed while this one was still running.
+
+    A terminal echoes what you type as you type it. Start something slow - a
+    scan, a build, a `sleep` - and type the next command while you wait, and
+    those keystrokes are echoed inside the running command's output. The
+    screen really did show them, but they are not what the command printed:
+    `sleep 3` came out of the parser with the next command as its entire
+    output, and that command then appeared again as the step below.
+
+    Only a run of lines at the very end, matching the commands that follow in
+    the order they were typed, is taken - and nothing is lost by taking it,
+    because every line removed here is the text of a step that is still in the
+    document, directly underneath, as its own command.
+    """
+    for index, step in enumerate(steps):
+        if not step.output or step.source != "marker":
+            continue
+        lines = step.output.split("\n")
+        follow = [redact(later.cmd, do_redact).strip()
+                  for later in steps[index + 1: index + 1 + TYPEAHEAD_LOOKAHEAD]]
+        matched = 0
+        for count in range(1, min(len(lines), len(follow)) + 1):
+            if [line.strip() for line in lines[-count:]] == follow[:count]:
+                matched = count
+        if matched:
+            step.output = "\n".join(lines[:-matched]).rstrip()
+    return steps
+
+
 def parse_marked_transcript(raw: str, do_redact: bool = True) -> list[Step]:
     """Exact extraction using the shell-integration markers."""
     marks = list(MARKER_RE.finditer(raw))
@@ -213,6 +249,9 @@ def parse_marked_transcript(raw: str, do_redact: bool = True) -> list[Step]:
             render_capture(raw[out_start:], started_width), do_redact)
         steps.append(pending)
 
+    # Before the filter: a `sectape note` typed ahead echoes like any other
+    # command, and it is only dropped from the document afterwards.
+    _strip_typed_ahead(steps, do_redact)
     return [s for s in steps if not _is_ignored(s.cmd)]
 
 
