@@ -3,6 +3,7 @@ import os
 import pathlib
 import re
 import shutil
+import tempfile
 import time
 import subprocess
 import sys
@@ -459,6 +460,61 @@ class TestCompletionScripts(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bash"), "bash not available")
     def test_the_bash_script_is_valid_bash(self):
         self.check_syntax(shutil.which("bash"), self.script("bash"), ".bash")
+
+    def test_the_scripts_point_at_the_configured_state_directory(self):
+        # `$HOME/.sectape` was written into both scripts as a literal, so
+        # anyone who set state_dir in a config file - which is what
+        # `sectape config init` invites you to do - got tab-completion
+        # listing a directory their recordings were not in.
+        vault = pathlib.Path(tempfile.mkdtemp(prefix="sectape-vault-"))
+        self.addCleanup(lambda: shutil.rmtree(vault, ignore_errors=True))
+        saved = config.settings
+        config.settings = config.load(state_dir=str(vault))
+        self.addCleanup(lambda: setattr(config, "settings", saved))
+        for shell in ("zsh", "bash"):
+            script = self.script(shell)
+            self.assertIn(str(vault), script, shell)
+            self.assertNotIn("$HOME/.sectape", script, shell)
+
+    def test_a_state_directory_needing_quotes_stays_quoted(self):
+        root = pathlib.Path(tempfile.mkdtemp(prefix="sectape-odd-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        odd = root / "state dir with 'quotes' and $VARS"
+        odd.mkdir()
+        saved = config.settings
+        config.settings = config.load(state_dir=str(odd))
+        self.addCleanup(lambda: setattr(config, "settings", saved))
+        for shell, binary in (("zsh", shutil.which("zsh")),
+                              ("bash", shutil.which("bash"))):
+            if not binary:
+                continue
+            self.check_syntax(binary, self.script(shell), f".{shell}")
+
+    @unittest.skipUnless(shutil.which("bash"), "bash not available")
+    def test_the_bash_script_really_offers_the_recordings(self):
+        # Sourcing it and driving the completion function is the only way to
+        # know the path it builds is the one it reads.
+        vault = pathlib.Path(tempfile.mkdtemp(prefix="sectape-vault-"))
+        self.addCleanup(lambda: shutil.rmtree(vault, ignore_errors=True))
+        (vault / "sessions" / "cert_renewal").mkdir(parents=True)
+        (vault / "sessions" / "box_htb").mkdir(parents=True)
+        saved = config.settings
+        config.settings = config.load(state_dir=str(vault))
+        self.addCleanup(lambda: setattr(config, "settings", saved))
+
+        script = vault / "completion.bash"
+        script.write_text(self.script("bash"), encoding="utf-8")
+        driver = (f'source "{script}"\n'
+                  'COMP_WORDS=(sectape export ""); COMP_CWORD=2\n'
+                  '_sectape\n'
+                  'printf "%s\\n" "${COMPREPLY[@]}"\n')
+        env = {k: v for k, v in os.environ.items() if k != "SECTAPE_STATE_DIR"}
+        result = subprocess.run([shutil.which("bash"), "-c", driver],
+                                capture_output=True, text=True, timeout=60,
+                                env=env)
+        offered = set(result.stdout.split())
+        self.assertEqual(offered, {"cert_renewal", "box_htb"},
+                         result.stdout + result.stderr)
 
     def test_every_command_is_offered_by_both_scripts(self):
         # Otherwise a command added here quietly stops being completable.

@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Tab-completion looked in the wrong place for anyone using a config
+  file.** Both completion scripts had `$HOME/.sectape` written into them as a
+  literal, so setting `state_dir` in a config file - which is exactly what
+  `sectape config init` writes out for you - left `sectape export <tab>`
+  listing a directory your recordings were not in. The generated script now
+  carries the state directory this install is actually configured with,
+  shell-quoted, and `SECTAPE_STATE_DIR` still overrides it at completion time.
+
 - **A re-export deleted anything you had added to the YAML frontmatter.** The
   markdown writer preserves the prose you write around the generated block,
   which is the whole point of the block - but it replaced the frontmatter

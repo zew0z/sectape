@@ -12,7 +12,7 @@ from pathlib import Path
 from . import __version__, config
 from .config import ConfigError
 from .formats import WRITERS, Recording, export, filter_steps, render
-from .markers import ZSH_HOOKS
+from .markers import ZSH_HOOKS, sh_quote
 from .recorder import (SUPPORTED_SHELLS, chosen_shell,
                        integration_available, record_pty)
 from .session import (add_note, allocate_pane, clear_session_if_idle,
@@ -684,7 +684,8 @@ ZSH_COMPLETION = """#compdef sectape
 # sectape zsh completion - install with:
 #   sectape completion zsh > "${fpath[1]}/_sectape"
 _sectape_sessions() {
-  local dir="${SECTAPE_STATE_DIR:-$HOME/.sectape}/sessions"
+  local fallback=__STATE_DIR__
+  local dir="${SECTAPE_STATE_DIR:-$fallback}/sessions"
   [[ -d $dir ]] && _values 'recording' ${(f)"$(ls -1 $dir 2>/dev/null)"}
 }
 _sectape() {
@@ -713,7 +714,7 @@ _sectape "$@"
 BASH_COMPLETION = """# sectape bash completion - install with:
 #   sectape completion bash > /etc/bash_completion.d/sectape
 _sectape() {
-  local cur prev commands dir
+  local cur prev commands dir fallback
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   commands="rec attach stop note export show list status rm config doctor completion"
@@ -723,7 +724,8 @@ _sectape() {
   fi
   case "${COMP_WORDS[1]}" in
     export|show|rm)
-      dir="${SECTAPE_STATE_DIR:-$HOME/.sectape}/sessions"
+      fallback=__STATE_DIR__
+      dir="${SECTAPE_STATE_DIR:-$fallback}/sessions"
       COMPREPLY=( $(compgen -W "$(ls -1 "$dir" 2>/dev/null)" -- "$cur") ) ;;
     config)
       COMPREPLY=( $(compgen -W "init show path" -- "$cur") ) ;;
@@ -736,7 +738,18 @@ complete -F _sectape sectape
 
 
 def cmd_completion(args) -> int:
-    print(ZSH_COMPLETION if args.shell == "zsh" else BASH_COMPLETION, end="")
+    """Emit a completion script that knows where this install keeps its
+    recordings.
+
+    The state directory was written into both scripts as a literal
+    `$HOME/.sectape`, so anyone who set `state_dir` in a config file - the way
+    `sectape config init` invites you to - got tab-completion listing a
+    directory their recordings were not in. `SECTAPE_STATE_DIR` still wins at
+    completion time, as it does everywhere else.
+    """
+    script = ZSH_COMPLETION if args.shell == "zsh" else BASH_COMPLETION
+    print(script.replace("__STATE_DIR__", sh_quote(config.settings.state_dir)),
+          end="")
     return 0
 
 
