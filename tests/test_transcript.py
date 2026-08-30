@@ -103,14 +103,25 @@ class TestHeuristicParsing(TempConfig):
 
 
 class TestInteractiveSummary(TempConfig):
+    # A screenful. One line is a message, and a full-screen program that only
+    # had a message for you never drew a screen to hide.
+    REDRAW = "".join(f"MANGLED REDRAW line {i}\r\n" for i in range(12))
+
     def test_full_screen_output_replaced(self):
-        step = parse_transcript(begin("vim notes.md") + "MANGLED REDRAW\r\n" + end(0))[0]
+        step = parse_transcript(begin("vim notes.md") + self.REDRAW + end(0))[0]
         self.assertIn("interactive vim session", step.output)
         self.assertNotIn("MANGLED", step.output)
 
     def test_sudo_prefix_still_detected(self):
-        step = parse_transcript(begin("sudo less /var/log/x") + "junk\r\n" + end(0))[0]
+        step = parse_transcript(begin("sudo less /var/log/x") + self.REDRAW + end(0))[0]
         self.assertIn("interactive less session", step.output)
+
+    def test_a_failure_message_survives_the_sudo_prefix_too(self):
+        step = parse_transcript(begin("sudo less /var/log/x")
+                                + "/var/log/x: No such file or directory\r\n"
+                                + end(1))[0]
+        self.assertEqual(step.output, "/var/log/x: No such file or directory")
+        self.assertEqual(step.exit_code, 1)
 
     def test_ordinary_command_untouched(self):
         step = parse_transcript(begin("cat notes.txt") + "real content\r\n" + end(0))[0]
@@ -658,8 +669,13 @@ class TestSshInsideARecording(TempConfig):
 class TestFullScreenProgramsInAPipeline(TempConfig):
     """Piping into a pager is how most people meet one."""
 
-    def output_for(self, cmd: str) -> str:
-        raw = begin(cmd, 1.0) + "MANGLED SCREEN REDRAW\r\n" + end(0, 2.0)
+    # A screenful, because that is what the summary is there to hide. One
+    # line is a message, and a full-screen program that only had a message
+    # for you never drew a screen at all.
+    REDRAW = "".join(f"MANGLED SCREEN REDRAW line {i}\r\n" for i in range(12))
+
+    def output_for(self, cmd: str, body: str | None = None) -> str:
+        raw = begin(cmd, 1.0) + (self.REDRAW if body is None else body) + end(0, 2.0)
         return parse_transcript(raw)[0].output
 
     def assert_summarised(self, cmd: str, program: str):
@@ -682,16 +698,37 @@ class TestFullScreenProgramsInAPipeline(TempConfig):
         self.assert_summarised("ps aux | vim -", "vim")
 
     def test_an_ordinary_pipeline_keeps_its_output(self):
-        self.assertEqual(self.output_for("cat f | grep x"),
-                         "MANGLED SCREEN REDRAW")
+        self.assertIn("MANGLED", self.output_for("cat f | grep x"))
 
     def test_the_name_as_an_argument_does_not_count(self):
-        self.assertEqual(self.output_for("echo hi | grep less"),
-                         "MANGLED SCREEN REDRAW")
+        self.assertIn("MANGLED", self.output_for("echo hi | grep less"))
 
     def test_the_name_inside_quotes_does_not_count(self):
-        self.assertEqual(self.output_for("echo 'pipe to less' | wc -l"),
-                         "MANGLED SCREEN REDRAW")
+        self.assertIn("MANGLED", self.output_for("echo 'pipe to less' | wc -l"))
+
+    def test_a_pager_that_only_had_a_message_keeps_it(self):
+        # `less` on a path that is not there prints one line and exits. It
+        # never drew a screen, and that line is the only thing the step has
+        # to tell you - a real recording replaced a typo'd path with
+        # "screen output not recorded".
+        self.assertEqual(
+            self.output_for("less /etc/hostname",
+                            "/etc/hostname: No such file or directory\r\n"),
+            "/etc/hostname: No such file or directory")
+
+    def test_a_pager_that_drew_a_screen_is_still_summarised(self):
+        # A real pager puts the screen on the alternate buffer, which the
+        # replayer discards, so nothing survives to keep and the summary is
+        # all there is to say.
+        self.assertEqual(self.output_for("less big.txt", ""),
+                         "<interactive less session - "
+                         "screen output not recorded>")
+
+    def test_a_man_page_with_no_such_entry_keeps_the_error(self):
+        self.assertEqual(
+            self.output_for("man nosuchpage",
+                            "No manual entry for nosuchpage\r\n"),
+            "No manual entry for nosuchpage")
 
 
 class TestIgnoringPlumbingOnCompoundLines(TempConfig):

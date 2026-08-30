@@ -290,6 +290,13 @@ def parse_heuristic_transcript(raw: str, do_redact: bool = True) -> list[Step]:
     return steps
 
 
+# A full-screen program that never drew a screen still has something to say.
+# `less` on a file that is not there, `man` with no such page: one line, and
+# worth more than the summary. A screenful is what the summary is for, and a
+# message is not a screenful.
+FULLSCREEN_MESSAGE_LINES = 2
+
+
 def summarise_interactive(steps: list[Step]) -> list[Step]:
     """Replace redrawn full-screen output with a one-liner.
 
@@ -297,14 +304,25 @@ def summarise_interactive(steps: list[Step]) -> list[Step]:
     a pager is how most people meet one, and `git log | less -X` or
     `journalctl -u nginx | less` left the redrawn screen in the export
     because the line began with something else.
+
+    A program that failed before it drew anything is left alone. `less` on a
+    missing file prints one line and exits, and replacing that with "screen
+    output not recorded" threw away the only thing the step had to tell you -
+    a real recording said exactly that about a typo in a path. One that did
+    draw a screen leaves nothing behind to keep, because the alternate screen
+    is discarded, so the summary is still all there is to say.
     """
     for step in steps:
         for part in commands_in(step.cmd):
             base = base_command(part)
-            if base in FULLSCREEN_CMDS:
-                step.output = (f"<interactive {base} session - "
-                               "screen output not recorded>")
-                break
+            if base not in FULLSCREEN_CMDS:
+                continue
+            said = [line for line in (step.output or "").split("\n") if line.strip()]
+            if 0 < len(said) <= FULLSCREEN_MESSAGE_LINES:
+                break                       # a message, not a redrawn screen
+            step.output = (f"<interactive {base} session - "
+                           "screen output not recorded>")
+            break
     return steps
 
 

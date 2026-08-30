@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **A full-screen program that failed had its error thrown away.** `less` on a
+  path that is not there prints one line and exits, having never drawn a
+  screen - and that line was replaced with *"screen output not recorded"*,
+  which is the only thing the step had to tell you. A real recording reported
+  a typo'd path that way. The summary now applies to a screenful, not to a
+  message: a program that drew a real screen leaves nothing behind anyway,
+  because the alternate screen is discarded, so the summary is still all there
+  is to say about it. A pager left on the primary screen by `less -X`, whose
+  redraw really does reach the export, is summarised as before.
+
 - **A command typed while the last one was still running was recorded as that
   command's output.** A terminal echoes what you type as you type it, so
   starting something slow - a scan, a build, a `sleep` - and typing the next

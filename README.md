@@ -153,7 +153,9 @@ first clause. If you have disabled bash history, command text falls back to
 - A command you type while the last one is still running is recorded as the
   command it is, not as the output of the one you were waiting for.
 - Full-screen programs (`vim`, `less`, `top`, `man`, …) are recorded as a
-  one-line summary rather than a mangled screen dump.
+  one-line summary rather than a mangled screen dump - unless they never drew
+  a screen, in which case whatever they did print (`No manual entry for …`)
+  is kept, because that is the whole of what happened.
 - Multiple panes can record into one session; the session ends with the last
   one, not the first.
 
@@ -229,7 +231,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-719 tests, no dependencies. The end-to-end ones drive the real CLI through a
+723 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS
