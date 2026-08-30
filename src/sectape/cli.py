@@ -186,8 +186,15 @@ def cmd_rec(args) -> int:
     lines.append("")
     banner = "\n".join(lines)
 
-    record_pty(pane_log, banner, no_integration=no_integration)
-
+    try:
+        record_pty(pane_log, banner, no_integration=no_integration)
+    except OSError:
+        # The terminal went away mid-recording: the window was closed, an ssh
+        # connection dropped. Writing to it then raises EIO from wherever the
+        # recorder happened to be, and that used to escape to main() - so the
+        # export below never ran and the pane log sat on disk unexported.
+        # However the recording ended, releasing the pane is still owed.
+        pass
     return _release_pane(pane_id, "stopped", recorded)
 
 
@@ -217,9 +224,12 @@ def cmd_attach(args) -> int:
         u.hint(('note "…"', "annotate"), ("exit", "leave this pane")),
         "",
     ])
-    record_pty(pane_log, banner,
-               no_integration=args.no_integration or not config.settings.shell_integration)
-
+    try:
+        record_pty(pane_log, banner,
+                   no_integration=(args.no_integration
+                                   or not config.settings.shell_integration))
+    except OSError:
+        pass                                   # as in cmd_rec, above
     return _release_pane(pane_id, "detached", session)
 
 

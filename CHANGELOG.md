@@ -44,13 +44,18 @@
 
 - **Closing the terminal mid-recording threw the export away.** When the
   window is shut, or an ssh connection drops, the pty the recorder was
-  mirroring to goes with it. The teardown then printed its summary to a
-  terminal that no longer existed, which raises `EIO` - and that escaped from
-  the middle of the teardown, *before* the export ran. The pane log survived
-  on disk, but nothing reached the output directory and `current.json` still
-  claimed the session was live. Telling you what happened is worth less than
-  finishing the recording, so a report that cannot be delivered is now
-  dropped and the export goes ahead.
+  mirroring to goes with it, and writing to it afterwards raises `EIO`. That
+  escaped from wherever the recorder happened to be - the teardown's summary
+  on macOS, the mirror write inside the recording loop on Linux - and reached
+  `main`, which reported an error and returned, so the export never ran. The
+  pane log survived on disk, but nothing reached the output directory and
+  `current.json` still claimed the session was live.
+
+  Releasing the pane, which is what writes the export, is now owed however the
+  recording ends rather than only when it ends tidily. Alongside that: the
+  teardown drops a report it cannot deliver, the recorder stops mirroring but
+  keeps logging the shell's dying output instead of abandoning it, and failing
+  to restore a terminal that no longer exists is no longer an error.
 
 - **A command whose end marker never arrived was dropped from the export.**
   When the shell does not reach its prompt hook, no `e|` marker is written.

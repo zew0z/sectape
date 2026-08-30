@@ -202,6 +202,10 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
     prev_hup = signal.signal(signal.SIGHUP, on_terminate)
 
     status = 0
+    # Mirroring stops if the terminal goes away; logging carries on. On Linux
+    # a write to a pty whose other end has closed raises EIO, which used to
+    # abandon the rest of the shell's output rather than log it.
+    mirroring = True
     try:
         tty.setraw(stdin_fd)
         running = True
@@ -240,7 +244,11 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
                 if not data:
                     running = False
                 else:
-                    write_all(sys.stdout.fileno(), data)
+                    if mirroring:
+                        try:
+                            write_all(sys.stdout.fileno(), data)
+                        except OSError:
+                            mirroring = False
                     try:
                         write_all(log_fd, data)
                     except OSError:
@@ -259,7 +267,11 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
                 chunk = os.read(master_fd, 65536)
                 if not chunk:
                     break
-                write_all(sys.stdout.fileno(), chunk)
+                if mirroring:
+                    try:
+                        write_all(sys.stdout.fileno(), chunk)
+                    except OSError:
+                        mirroring = False
                 write_all(log_fd, chunk)
         except Exception:
             pass
@@ -282,7 +294,13 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
             except ChildProcessError:
                 status = 0
                 break
-        termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attrs)
+        try:
+            # TCSADRAIN waits for output to drain, which a terminal that has
+            # gone away will never do. Failing to restore one that no longer
+            # exists is not worth an exception.
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attrs)
+        except OSError:
+            pass
         try:
             sys.stdout.write(TERMINAL_RESET)
             sys.stdout.flush()

@@ -430,6 +430,45 @@ def parser_commands() -> list[str]:
     return []
 
 
+class TestTheExportSurvivesTheRecorderFailing(TempConfig):
+    """However the recording ends, the pane log is still worth exporting.
+
+    On Linux, a terminal that goes away makes a write inside `record_pty`
+    raise EIO. That escaped to `main`, which printed `error:` and returned -
+    so `_release_pane`, which is what runs the export, never happened. The
+    pane log sat on disk with nothing written to the output directory.
+    """
+
+    def _run_rec(self):
+        from sectape import cli
+
+        def fake_record_pty(log_path, banner, no_integration=False):
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(
+                begin("echo recovered") + "recovered\r\n" + end(0),
+                encoding="utf-8")
+            raise OSError(5, "Input/output error")
+
+        saved = cli.record_pty
+        cli.record_pty = fake_record_pty
+        self.addCleanup(lambda: setattr(cli, "record_pty", saved))
+
+        class Args:
+            label = ["salvage"]
+            no_integration = False
+        return cli.cmd_rec(Args())
+
+    def test_a_recorder_that_dies_on_the_terminal_still_exports(self):
+        self._run_rec()
+        exports = sorted(config.settings.output_dir.glob("*.md"))
+        self.assertTrue(exports, "nothing was exported")
+        self.assertIn("echo recovered", exports[0].read_text())
+
+    def test_and_the_session_is_not_left_registered_as_live(self):
+        self._run_rec()
+        self.assertFalse(config.settings.current_session_file.exists())
+
+
 class TestCompletionScripts(unittest.TestCase):
     """These are shipped as shell source and pasted into a user's shell."""
 
