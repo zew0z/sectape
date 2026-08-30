@@ -25,7 +25,7 @@ from .text import redact, trim_for_export
 from .transcript import collect_steps, count_commands
 from .util import (LABEL_LIMIT, human_duration, one_line, pid_alive,
                    plural,
-                   safe_filename, short_path, slugify,
+                   safe_filename, same_dir, short_path, slugify,
                    write_json_atomic)
 
 from .ui import Style, fit, style_for
@@ -543,7 +543,7 @@ def cmd_list(args) -> int:
         notes = len(read_notes(d))
         panes = len(list(d.glob("pane_*.raw")))
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(d.stat().st_mtime))
-        running = str(d) == str(active_dir)
+        running = same_dir(d, active_dir)
         print(row.format(
             mark=u.red(u.g("rec")) if running else " ",
             index=u.bold(str(i).rjust(2)),
@@ -631,7 +631,7 @@ def cmd_rm(args) -> int:
     if session_dir.name != name:
         print(f"{name!r} matched recording {session_dir.name!r}.")
     active = read_session()
-    if active and Path(active.get("dir", "")) == session_dir:
+    if active and same_dir(active.get("dir"), session_dir):
         print("That session is still active; run `sectape stop` first.")
         return 1
     if not args.yes:

@@ -137,6 +137,25 @@ def write_text_atomic(path: Path, text: str, mode: int | None = None) -> None:
     _write_atomic(path, text, Path(path).suffix or ".txt", mode)
 
 
+def same_dir(a, b) -> bool:
+    """Whether two paths name the same directory.
+
+    Compared as text they routinely disagree: `current.json` stores the
+    directory unresolved, straight from the configured state dir, while the
+    resolver hands back a fully resolved path. On macOS `/tmp` is a symlink to
+    `/private/tmp`, so a state directory under `/tmp` - which scripts and CI
+    pick constantly - made the two forms differ for every session. The guard
+    that refuses to delete a recording while it is still running was comparing
+    them that way, and never fired.
+    """
+    if not a or not b:
+        return False
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def pid_alive(pid) -> bool:
     """Whether a process id belongs to a process we can see.
 

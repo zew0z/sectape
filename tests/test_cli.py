@@ -257,6 +257,48 @@ class TestSubprocessSmoke(unittest.TestCase):
         self.assertFalse(session.exists())
 
 
+    def test_rm_refuses_a_session_that_is_still_recording(self):
+        session = self.root / "state" / "sessions" / "live"
+        session.mkdir(parents=True)
+        (session / "pane_1.raw").write_text("recorded output")
+        (self.root / "state" / "current.json").write_text(json.dumps({
+            "label": "live", "slug": "live", "dir": str(session),
+            "started": time.time(),
+            "panes": {"01": {"pid": os.getpid(), "log": "x"}},
+        }), encoding="utf-8")
+        r = run("rm", "live", "--yes", env=self.env)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("still active", r.stdout)
+        self.assertTrue(session.exists(), "a live recording was deleted")
+
+    def test_rm_refuses_it_through_a_symlinked_state_directory(self):
+        # current.json stores the directory unresolved; the resolver returns it
+        # resolved. Compared as text those disagree the moment any component of
+        # the path is a symlink - which on macOS is true of /tmp itself - and
+        # the guard above never fired: `sectape rm --yes` deleted the pane logs
+        # of a session that was still being written to.
+        real = self.root / "real-state"
+        (real / "sessions" / "live").mkdir(parents=True)
+        (real / "sessions" / "live" / "pane_1.raw").write_text("recorded output")
+        link = self.root / "linked-state"
+        os.symlink(real, link)
+        (real / "current.json").write_text(json.dumps({
+            "label": "live", "slug": "live",
+            # As cmd_rec writes it: built from the configured state dir, which
+            # is the symlink, so it never matches the resolved form.
+            "dir": str(link / "sessions" / "live"),
+            "started": time.time(),
+            "panes": {"01": {"pid": os.getpid(), "log": "x"}},
+        }), encoding="utf-8")
+        env = dict(self.env)
+        env["SECTAPE_STATE_DIR"] = str(link)
+        r = run("rm", "live", "--yes", env=env)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("still active", r.stdout)
+        self.assertTrue((real / "sessions" / "live" / "pane_1.raw").exists(),
+                        "a live recording was deleted through a symlink")
+
+
 class TestPipeClosedEarly(TempConfig):
     """`sectape show | head` is an ordinary thing to type."""
 

@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **`sectape rm --yes` could delete a recording that was still running.** The
+  guard that refuses to do that compared the directory stored in
+  `current.json`, which is unresolved, against the resolved path the resolver
+  returns. Those disagree as text the moment any component of the path is a
+  symlink - and on macOS `/tmp` is one, so a state directory under `/tmp`,
+  which scripts and CI pick constantly, made them differ for every session.
+  The message never appeared, the pane logs of a live recording were removed
+  while it was still being written to, and the export at the end found
+  nothing. Both sides are now resolved before they are compared. The same
+  comparison decided the `REC` marker in `sectape list`, which had never
+  appeared for those sessions either.
+
 - **Closing the terminal mid-recording threw the export away.** When the
   window is shut, or an ssh connection drops, the pty the recorder was
   mirroring to goes with it. The teardown then printed its summary to a

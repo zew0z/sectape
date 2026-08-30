@@ -8,13 +8,14 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import pathlib
 import tempfile
 import unittest
 from pathlib import Path
 
 from sectape.util import (human_duration, load_json, one_line, pid_alive,
                           plural,
-                          safe_filename, short_path, slugify, squash,
+                          safe_filename, same_dir, short_path, slugify, squash,
                           write_json_atomic, write_text_atomic)
 
 
@@ -269,6 +270,35 @@ class TestPidAlive(unittest.TestCase):
         child.wait()
         # The pid may be recycled in principle; in practice this is stable.
         self.assertFalse(pid_alive(child.pid))
+
+
+class TestSameDir(unittest.TestCase):
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="sectape-samedir-"))
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+
+    def test_a_directory_is_itself(self):
+        self.assertTrue(same_dir(self.root, self.root))
+        self.assertTrue(same_dir(str(self.root), pathlib.Path(self.root)))
+
+    def test_a_symlinked_route_is_the_same_directory(self):
+        real = self.root / "real"
+        real.mkdir()
+        link = self.root / "link"
+        os.symlink(real, link)
+        self.assertTrue(same_dir(link, real))
+
+    def test_different_directories_are_not(self):
+        (self.root / "a").mkdir()
+        (self.root / "b").mkdir()
+        self.assertFalse(same_dir(self.root / "a", self.root / "b"))
+
+    def test_nothing_is_never_the_same_as_something(self):
+        # An empty path resolves to the working directory, which would make
+        # a session with no recorded `dir` match whatever happened to be there.
+        for missing in ("", None):
+            self.assertFalse(same_dir(missing, self.root), repr(missing))
+            self.assertFalse(same_dir(self.root, missing), repr(missing))
 
 
 if __name__ == "__main__":
