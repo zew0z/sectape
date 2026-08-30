@@ -149,6 +149,44 @@ class TestCollecting(TempConfig):
         steps, _ = collect_steps(d, do_redact=False)
         self.assertIn("sekrit.token", steps[0].cmd)
 
+    def test_a_private_key_cut_in_half_by_trimming_is_still_redacted(self):
+        # The output is trimmed to max_output_lines before it reaches the
+        # export. The private-key pattern needs its own -----END----- line to
+        # match, and the trim used to run first: cutting the middle out of a
+        # long log took the END line with it and left the header plus twenty
+        # lines of key material in the document, unredacted.
+        key = (["-----BEGIN RSA PRIVATE KEY-----"]
+               + [f"MIIEow{i:04d}AAKCAQEA{'x' * 40}" for i in range(25)]
+               + ["-----END RSA PRIVATE KEY-----"])
+        body = ([f"log line {i}" for i in range(260)] + key
+                + [f"log line {i}" for i in range(260, 634)])
+        d = self.make_session(
+            "leak", begin("cat dump.txt") + "\r\n".join(body) + "\r\n" + end(0))
+        out = collect_steps(d)[0][0].output
+        self.assertNotIn("-----BEGIN RSA PRIVATE KEY-----", out)
+        self.assertEqual([l for l in out.split("\n") if l.startswith("MIIEow")], [])
+        self.assertIn("<REDACTED: private key>", out)
+
+    def test_a_secret_on_an_over_long_line_survives_that_truncation_too(self):
+        # A line past 300 characters is cut down to 250. That cut used to
+        # happen before redaction, so a one-line key lost its END marker the
+        # same way.
+        one_line = ("-----BEGIN PRIVATE KEY-----"
+                    + "MIIEowIBAAKCAQEA" * 30 + "-----END PRIVATE KEY-----")
+        d = self.make_session(
+            "longline", begin("cat key.pem") + one_line + "\r\n" + end(0))
+        out = collect_steps(d)[0][0].output
+        self.assertNotIn("MIIEowIBAAKCAQEA", out)
+        self.assertIn("<REDACTED: private key>", out)
+
+    def test_no_redact_still_keeps_the_output_verbatim(self):
+        d = self.make_session(
+            "verbatim", begin("cat key.pem")
+            + "-----BEGIN RSA PRIVATE KEY-----\r\nMIIEowIBAAKCAQEA\r\n"
+            + "-----END RSA PRIVATE KEY-----\r\n" + end(0))
+        out = collect_steps(d, do_redact=False)[0][0].output
+        self.assertIn("MIIEowIBAAKCAQEA", out)
+
     def test_empty_session(self):
         d = self.sessions / "empty"
         d.mkdir(parents=True)

@@ -144,7 +144,18 @@ def render_capture(raw: str, width: int | None = None) -> str:
     return screen.to_text()
 
 
-def parse_marked_transcript(raw: str) -> list[Step]:
+def _clean(text: str, do_redact: bool = True) -> str:
+    """Redact, then trim - never the other way round.
+
+    Trimming drops the middle of a long block, and a private key is the one
+    secret whose pattern needs both ends of itself to match. Cutting first
+    could take the `-----END-----` line away and leave the header and twenty
+    lines of key material in the export with nothing left to match them.
+    """
+    return clean_terminal_output(redact(text, do_redact))
+
+
+def parse_marked_transcript(raw: str, do_redact: bool = True) -> list[Step]:
     """Exact extraction using the shell-integration markers."""
     marks = list(MARKER_RE.finditer(raw))
     if not marks:
@@ -180,20 +191,20 @@ def parse_marked_transcript(raw: str) -> list[Step]:
             if ended is not None and pending.started is not None:
                 pending.duration = max(0.0, ended - pending.started)
             pending.cwd = _b64d(parts[3]) if len(parts) > 3 else ""
-            pending.output = clean_terminal_output(
-                render_capture(raw[out_start:m.start()], started_width))
+            pending.output = _clean(
+                render_capture(raw[out_start:m.start()], started_width), do_redact)
             steps.append(pending)
             pending = None
 
     if pending is not None:                    # session ended mid-command
-        pending.output = clean_terminal_output(
-            render_capture(raw[out_start:], started_width))
+        pending.output = _clean(
+            render_capture(raw[out_start:], started_width), do_redact)
         steps.append(pending)
 
     return [s for s in steps if not _is_ignored(s.cmd)]
 
 
-def parse_heuristic_transcript(raw: str) -> list[Step]:
+def parse_heuristic_transcript(raw: str, do_redact: bool = True) -> list[Step]:
     """Fallback for captures with no markers (old logs, ssh, other shells)."""
     text = render_capture(raw)
     steps: list[Step] = []
@@ -203,7 +214,7 @@ def parse_heuristic_transcript(raw: str) -> list[Step]:
     def close():
         nonlocal current, buf
         if current is not None:
-            current.output = clean_terminal_output("\n".join(buf))
+            current.output = _clean("\n".join(buf), do_redact)
             steps.append(current)
         current, buf = None, []
 
@@ -246,10 +257,10 @@ def summarise_interactive(steps: list[Step]) -> list[Step]:
     return steps
 
 
-def parse_transcript(raw: str) -> list[Step]:
-    steps = parse_marked_transcript(raw)
+def parse_transcript(raw: str, do_redact: bool = True) -> list[Step]:
+    steps = parse_marked_transcript(raw, do_redact)
     if not steps:
-        steps = parse_heuristic_transcript(raw)
+        steps = parse_heuristic_transcript(raw, do_redact)
     return summarise_interactive(steps)
 
 
@@ -346,13 +357,14 @@ def collect_steps(session_dir: Path, do_redact: bool = True) -> tuple[list[Step]
 
     steps: list[Step] = []
     for pane_name, raw in raws:
-        for step in parse_transcript(raw):
+        for step in parse_transcript(raw, do_redact):
             step.pane = pane_name
             steps.append(step)
 
     steps = sort_by_time(dedupe_steps(steps))
     if do_redact:
         for s in steps:
+            # The output was redacted before it was trimmed, back in the
+            # parser; only the command line is left to do here.
             s.cmd = redact(s.cmd)
-            s.output = redact(s.output)
     return steps, len(raws)

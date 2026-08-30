@@ -21,6 +21,16 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Fixed
 
+- **A private key could reach the export with only its header removed.**
+  Command output was trimmed to `max_output_lines` first and redacted second.
+  The private-key pattern is the one that has to match both ends of itself, so
+  when the trim dropped the middle of a long log it took the `-----END-----`
+  line with it, and the redaction that followed had nothing left to match: the
+  `-----BEGIN RSA PRIVATE KEY-----` header and nineteen lines of key material
+  went into the document verbatim. The same held for a key on a single line
+  over 300 characters, which is cut to 250. Output is now redacted before it is
+  trimmed, everywhere - notes already were. `--no-redact` is unchanged.
+
 - **`sectape rm` could delete a directory outside the session tree.** A name
   from the command line was tried as a raw path first, so
   `sectape rm ../../work --yes` resolved to, and then removed, something that
