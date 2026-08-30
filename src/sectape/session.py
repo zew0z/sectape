@@ -230,8 +230,17 @@ def resolve_session_dir(name: str) -> Path | None:
         entries = sorted(config.settings.sessions_dir.iterdir())
     except OSError:
         return None
-    matches = [d for d in entries if d.is_dir() and squash(d.name) == squash(name)]
-    return matches[0] if matches else None
+    for entry in entries:
+        # The containment check belongs here too. This loop used to hand back
+        # the entry as it found it, so a symlink inside the sessions directory
+        # resolved to a target outside it and the promise above was not kept -
+        # `sectape rm` was left as the only thing standing between that and a
+        # deleted tree, by way of a second check of its own.
+        if entry.is_dir() and squash(entry.name) == squash(name):
+            found = child(entry.name)
+            if found is not None:
+                return found
+    return None
 
 
 # --------------------------------------------------------------------------

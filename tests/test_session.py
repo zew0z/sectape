@@ -120,6 +120,23 @@ class TestResolutionStaysInsideTheSessionTree(TempConfig):
         (self.sessions / "real" / "inner").mkdir(exist_ok=True)
         self.assertIsNone(resolve_session_dir("real/inner"))
 
+    def test_a_symlink_pointing_out_of_the_tree_is_not_a_recording(self):
+        # The name-matching fallback returned the entry as it found it, with
+        # none of the containment checking the direct lookup does - so a
+        # symlink inside the sessions directory resolved to a target outside
+        # it, and the promise this class is named after was not kept.
+        os.symlink(self.outside, self.sessions / "decoy")
+        self.assertIsNone(resolve_session_dir("decoy"))
+        self.assertIsNone(resolve_session_dir("DECOY"))
+
+    def test_a_symlink_within_the_tree_is_still_a_recording(self):
+        # Pointing one recording at another inside the same directory is not
+        # an escape, and refusing it would be over-reach.
+        (self.sessions / "target").mkdir(exist_ok=True)
+        os.symlink(self.sessions / "target", self.sessions / "alias")
+        self.assertEqual(resolve_session_dir("alias"),
+                         (self.sessions / "target").resolve())
+
     def test_rm_refuses_to_delete_outside_the_tree(self):
         import subprocess
         import sys

@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **`resolve_session_dir` did not keep the promise in its own docstring.** The
+  direct lookup refuses anything that is not a direct child of the sessions
+  directory, but the name-matching fallback beneath it returned the entry as
+  it found it, unchecked - so a symlink inside the sessions directory resolved
+  to a target outside it and was handed back as a recording. Nothing was
+  deleted, because `sectape rm` re-checks containment before it removes
+  anything; that second check was simply carrying the whole weight rather than
+  being the belt-and-braces it reads as. The fallback now applies the same
+  check, and a symlink pointing *within* the tree still resolves.
+
 - **`sectape rm --yes` could delete a recording that was still running.** The
   guard that refuses to do that compared the directory stored in
   `current.json`, which is unresolved, against the resolved path the resolver
