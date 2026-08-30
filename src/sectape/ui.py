@@ -2,8 +2,8 @@
 
 A tape deck: a red dot while it is running, a square when it stops, and a
 counter in between. Colour is dropped when the output is not a terminal or
-NO_COLOR is set, and every glyph degrades to ASCII when the terminal cannot
-say it speaks UTF-8.
+NO_COLOR is set; `SECTAPE_COLOR` overrides that guess in either direction.
+Every glyph degrades to ASCII when the terminal cannot say it speaks UTF-8.
 """
 from __future__ import annotations
 
@@ -66,11 +66,26 @@ def unicode_ok() -> bool:
     return False
 
 
+# `SECTAPE_COLOR` is the explicit answer to the question the other checks only
+# guess at, so it is consulted first and settles it either way.
+COLOUR_OFF = ("0", "never", "off", "no", "false")
+COLOUR_ON = ("1", "always", "on", "yes", "true", "force")
+
+
 def colour_ok(stream=None) -> bool:
-    stream = stream or sys.stdout
-    if os.environ.get("NO_COLOR") is not None:
+    """Whether to paint escape sequences onto `stream`.
+
+    `SECTAPE_COLOR=always` exists because the guess is wrong in both
+    directions: a pipe into `less -R`, or a CI log that renders ANSI, gets no
+    colour from `isatty` and had no way to ask for it.
+    """
+    stream = sys.stdout if stream is None else stream
+    setting = os.environ.get("SECTAPE_COLOR", "").strip().lower()
+    if setting in COLOUR_OFF:
         return False
-    if os.environ.get("SECTAPE_COLOR", "").lower() in ("0", "never", "off"):
+    if setting in COLOUR_ON:
+        return True
+    if os.environ.get("NO_COLOR") is not None:
         return False
     try:
         return stream.isatty()

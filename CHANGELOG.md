@@ -320,6 +320,15 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Added
 
+- **Colour could be turned off but never on.** `SECTAPE_COLOR` recognised
+  `0`/`never`/`off` and nothing else, so `SECTAPE_COLOR=always` was silently
+  ignored and `sectape list | less -R` - or a CI log that renders ANSI
+  perfectly well - came out grey with no way to ask otherwise. The variable now
+  settles it in both directions and, being the explicit tool-specific setting,
+  outranks `NO_COLOR` either way. A value it does not recognise leaves the
+  terminal check to decide rather than quietly meaning *on*. It is documented
+  now too; it never was.
+
 - **Three settings had no environment variable, though the README promised one
   for every value.** `max_output_lines`, `max_output_chars` and
   `redact_replacement` could only be set in a config file, so a CI job or a

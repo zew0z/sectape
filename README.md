@@ -195,6 +195,12 @@ the file only — has a `SECTAPE_*` environment variable equivalent:
 `SECTAPE_MAX_OUTPUT_LINES`, `SECTAPE_MAX_OUTPUT_CHARS`. `--state-dir` /
 `--output-dir` / `--no-redact` override both.
 
+Colour is decided separately, since it is a property of where the output is
+going rather than of the recording. It is on for a terminal and off for a pipe,
+`NO_COLOR` turns it off, and `SECTAPE_COLOR` settles it either way —
+`SECTAPE_COLOR=always` keeps the colour when you pipe into `less -R` or into a
+CI log that renders ANSI, `SECTAPE_COLOR=never` drops it on a terminal.
+
 ## Privacy
 
 **The raw pane log records everything your terminal displayed.** That is the

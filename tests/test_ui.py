@@ -11,7 +11,8 @@ import subprocess
 import sys
 import unittest
 
-from sectape.ui import Style, colour_ok, display_width, fit, unicode_ok
+from sectape.ui import (Style, colour_ok, display_width, fit, style_for,
+                        unicode_ok)
 from tests.helpers import TempConfig
 
 ESC = "\x1b"
@@ -56,6 +57,35 @@ class TestColourDecision(unittest.TestCase):
         for value in ("0", "never", "off", "NEVER", "Off"):
             os.environ["SECTAPE_COLOR"] = value
             self.assertFalse(colour_ok(FakeStream(tty=True)), value)
+
+    def test_sectape_color_on_forces_colour_through_a_pipe(self):
+        # Piping into `less -R`, or a CI log that renders ANSI, is a terminal
+        # as far as the reader is concerned; isatty cannot tell.
+        for value in ("1", "always", "on", "yes", "true", "force", "ALWAYS", " On "):
+            os.environ["SECTAPE_COLOR"] = value
+            self.assertTrue(colour_ok(FakeStream(tty=False)), value)
+
+    def test_sectape_color_on_beats_no_color(self):
+        # The tool-specific setting is the more explicit of the two, so it is
+        # the one that decides.
+        os.environ["NO_COLOR"] = "1"
+        os.environ["SECTAPE_COLOR"] = "always"
+        self.assertTrue(colour_ok(FakeStream(tty=False)))
+
+    def test_sectape_color_off_beats_a_terminal_and_no_color_alike(self):
+        os.environ["NO_COLOR"] = "1"
+        os.environ["SECTAPE_COLOR"] = "never"
+        self.assertFalse(colour_ok(FakeStream(tty=True)))
+
+    def test_an_unrecognised_sectape_color_leaves_the_guess_alone(self):
+        # A typo must not silently mean "on"; the terminal check still decides.
+        os.environ["SECTAPE_COLOR"] = "mauve"
+        self.assertTrue(colour_ok(FakeStream(tty=True)))
+        self.assertFalse(colour_ok(FakeStream(tty=False)))
+
+    def test_style_for_carries_the_forced_choice(self):
+        os.environ["SECTAPE_COLOR"] = "always"
+        self.assertTrue(style_for(FakeStream(tty=False)).colour)
 
     def test_a_stream_that_cannot_answer_gets_no_colour(self):
         class Broken:
