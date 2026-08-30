@@ -21,6 +21,14 @@ Behaviour an existing setup may notice. Each is described in full below.
 
 ### Fixed
 
+- **One hand-edited line in `notes.jsonl` made a whole recording
+  unexportable.** `read_notes` skips a blank line, a line that is not JSON, a
+  record that is not an object and a record with no text - and then raised on
+  an `at` it could not turn into a number, which came out of `sectape show` and
+  `sectape export` as a traceback and took every good note in the file with it.
+  An unreadable timestamp now falls back to `0.0`, which is what a missing one
+  has always used, so the note keeps its text and loses only its place.
+
 - **A private key could reach the export with only its header removed.**
   Command output was trimmed to `max_output_lines` first and redacted second.
   The private-key pattern is the one that has to match both ends of itself, so

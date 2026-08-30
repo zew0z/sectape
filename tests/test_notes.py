@@ -41,6 +41,24 @@ class TestAnnotationStore(TempConfig):
             fh.write("not json\n{}\n")
         self.assertEqual([n["text"] for n in read_notes(d)], ["good"])
 
+    def test_an_unusable_timestamp_costs_only_its_own_note_its_place(self):
+        # Every other malformed field is skipped. This one raised instead, and
+        # the traceback came out of `sectape show` and `export`, so one bad
+        # line made the whole recording unexportable - good notes included.
+        d = self.make_session("s")
+        add_note("good", d, when=1700000000.0)
+        with (d / "notes.jsonl").open("a") as fh:
+            fh.write('{"at": "soon", "text": "hand-edited"}\n')
+            fh.write('{"at": null, "text": "no stamp at all"}\n')
+            fh.write('{"at": {"nested": 1}, "text": "wrong type"}\n')
+        notes = read_notes(d)
+        self.assertIn("good", [n["text"] for n in notes])
+        self.assertEqual(len(notes), 4)
+        # An unreadable stamp falls back to 0.0, the same value a missing one
+        # has always used, so those notes sort ahead of the timed one.
+        self.assertEqual(notes[-1]["text"], "good")
+        self.assertTrue(all(isinstance(n["at"], float) for n in notes))
+
     def test_missing_file_is_empty(self):
         self.assertEqual(read_notes(self.root / "nowhere"), [])
 

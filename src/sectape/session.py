@@ -297,9 +297,17 @@ def read_notes(session_dir: Path) -> list[dict]:
                     record = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(record, dict) and record.get("text"):
-                    notes.append({"at": float(record.get("at") or 0.0),
-                                  "text": str(record["text"])})
+                if not isinstance(record, dict) or not record.get("text"):
+                    continue
+                # Every other malformed field here is skipped rather than
+                # raised on; an `at` that will not convert used to be the one
+                # exception, and it took the whole export down with it - good
+                # notes and all - rather than the one line it was written on.
+                try:
+                    at = float(record.get("at") or 0.0)
+                except (TypeError, ValueError):
+                    at = 0.0
+                notes.append({"at": at, "text": str(record["text"])})
     except OSError:
         return []
     notes.sort(key=lambda n: n["at"])
