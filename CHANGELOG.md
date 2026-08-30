@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **Closing the terminal mid-recording threw the export away.** When the
+  window is shut, or an ssh connection drops, the pty the recorder was
+  mirroring to goes with it. The teardown then printed its summary to a
+  terminal that no longer existed, which raises `EIO` - and that escaped from
+  the middle of the teardown, *before* the export ran. The pane log survived
+  on disk, but nothing reached the output directory and `current.json` still
+  claimed the session was live. Telling you what happened is worth less than
+  finishing the recording, so a report that cannot be delivered is now
+  dropped and the export goes ahead.
+
 - **A command whose end marker never arrived was dropped from the export.**
   When the shell does not reach its prompt hook, no `e|` marker is written.
   The parser kept such a command if the log ended there, but overwrote it if

@@ -35,6 +35,22 @@ def ui() -> Style:
     return style_for()
 
 
+def say(*parts, **kwargs) -> None:
+    """Print, unless the terminal has gone away.
+
+    A pane is torn down after the terminal it was mirroring may have closed -
+    a window shut, an ssh connection dropped. Writing to it then raises EIO,
+    and that escaped from the middle of the teardown and abandoned the export:
+    the pane log stayed on disk unexported, with the session still registered
+    as recording. Telling someone what happened is worth less than finishing
+    the recording for them, so a report that cannot be delivered is dropped.
+    """
+    try:
+        print(*parts, **kwargs)
+    except OSError:
+        pass
+
+
 # --------------------------------------------------------------------------
 # recording
 # --------------------------------------------------------------------------
@@ -77,11 +93,11 @@ def _release_pane(pane_id: str, verb: str, recorded: dict | None = None) -> int:
     remaining = unregister_pane(pane_id)
     if remaining:
         still = u.grey("· " + plural(remaining, "pane") + " still recording")
-        print(f"\n  {u.grey(u.g('stop'))} pane {pane_label(pane_id)} {verb} {still}")
-        print(f"    {u.grey('run')} {u.bold('sectape stop')} "
+        say(f"\n  {u.grey(u.g('stop'))} pane {pane_label(pane_id)} {verb} {still}")
+        say(f"    {u.grey('run')} {u.bold('sectape stop')} "
               f"{u.grey('when the session is finished')}")
         return 0
-    print()
+    say()
     # Finish the session this pane was recording, not whatever is current by
     # now - starting a different recording replaces it while we tear down.
     session = recorded or read_session()
@@ -216,9 +232,9 @@ def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
     if not rec.steps and not rec.notes:
         if not quiet:
             for line in u.deck("stop", label):
-                print(line)
-            print(u.counter(u.grey("nothing captured")))
-            print()
+                say(line)
+            say(u.counter(u.grey("nothing captured")))
+            say()
         return None
     try:
         path = export(rec, fmt)
@@ -228,11 +244,11 @@ def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
         # the export can be retried once there is somewhere to put it.
         detail = getattr(exc, "strerror", None) or str(exc)
         where = getattr(exc, "filename", "")
-        print(f"  {u.red(u.g('cross'))} could not write the export: {detail}"
+        say(f"  {u.red(u.g('cross'))} could not write the export: {detail}"
               + (f": {short_path(where)}" if where else ""), file=sys.stderr)
-        print(f"    {u.grey('the recording is safe in')} "
+        say(f"    {u.grey('the recording is safe in')} "
               f"{short_path(session_dir)}", file=sys.stderr)
-        print(f"    {u.grey('retry with')} "
+        say(f"    {u.grey('retry with')} "
               f"{u.bold('sectape export ' + (session_dir.name or label))}",
               file=sys.stderr)
         return None
@@ -251,10 +267,10 @@ def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
             parts.append(u.yellow("reconstructed" if reconstructed == len(rec.steps)
                                   else f"{reconstructed} reconstructed"))
         for line in u.deck("stop", label):
-            print(line)
-        print(u.counter(*parts))
-        print(f"    {u.green(u.g('arrow'))} {short_path(path)}")
-        print()
+            say(line)
+        say(u.counter(*parts))
+        say(f"    {u.green(u.g('arrow'))} {short_path(path)}")
+        say()
     return path
 
 

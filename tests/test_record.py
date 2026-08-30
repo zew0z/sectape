@@ -872,6 +872,32 @@ class TestRecording(unittest.TestCase):
                          f"the redraw was captured as output: {body}")
         self.assertTrue(body[0].startswith("$ "), body[0])
 
+    def test_a_terminal_that_goes_away_still_gets_its_export(self):
+        # Closing the window, or an ssh connection dropping, takes the pty the
+        # recorder was mirroring to with it. The teardown then prints its
+        # summary to a terminal that is gone, which raises EIO - and that used
+        # to escape from the middle of the teardown, before the export ran.
+        # The pane log survived on disk, but nothing was written to the output
+        # directory and `current.json` still claimed the session was live.
+        pid, master = self.spawn("rec", "hangup")
+        read_until(master, "REC", 25)
+        time.sleep(1.2)
+        self.assertTrue(run_until_seen(master, ALPHA_CMD, ALPHA_OUT),
+                        "the shell never ran the command")
+        time.sleep(0.6)
+        os.close(master)                      # the terminal goes away
+        self.assertTrue(self.reap(pid, 25), "recorder did not stop")
+
+        note = self.exports / "hangup.md"
+        self.assertTrue(note.exists(),
+                        "nothing was exported: "
+                        + str(sorted(p.name for p in self.exports.iterdir())
+                              if self.exports.exists() else []))
+        text = note.read_text()
+        self.assertIn(ALPHA_OUT, text)
+        self.assertFalse((self.root / "state" / "current.json").exists(),
+                         "the session was left registered as still recording")
+
     def test_recording_again_under_the_same_label_says_it_is_appending(self):
         # The panes of an earlier recording are kept and numbered as though
         # they had been open alongside this one, so say so rather than
