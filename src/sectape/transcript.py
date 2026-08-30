@@ -177,6 +177,17 @@ def parse_marked_transcript(raw: str, do_redact: bool = True) -> list[Step]:
             except (IndexError, ValueError):
                 pass
         elif kind == "b":
+            if pending is not None:
+                # A command whose end marker never arrived - the shell never
+                # reached its prompt hook. It still ran, and its output is
+                # everything up to here, so it is closed out with an unknown
+                # exit code rather than overwritten and lost. Dropping it made
+                # `list` and the export disagree about how many commands the
+                # session held, and took the output with it.
+                pending.output = _clean(
+                    render_capture(raw[out_start:m.start()], started_width),
+                    do_redact)
+                steps.append(pending)
             cmd = _b64d(parts[1]) if len(parts) > 1 else ""
             started = parse_epoch(parts[2]) if len(parts) > 2 else None
             pending = Step(cmd=cmd.strip(), started=started, source="marker")

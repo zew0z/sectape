@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A command whose end marker never arrived was dropped from the export.**
+  When the shell does not reach its prompt hook, no `e|` marker is written.
+  The parser kept such a command if the log ended there, but overwrote it if
+  another command followed - so the command text, its output and its timing
+  all vanished, and `sectape list` reported a count the export did not match.
+  It is now closed out at the next marker with an unknown exit code, which is
+  the honest answer: it ran, and how it ended was never recorded.
+
 ## 5.0.0
 
 ### Compatibility

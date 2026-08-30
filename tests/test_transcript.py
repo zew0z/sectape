@@ -316,6 +316,46 @@ class TestBrokenTimestampsInAMarkedLog(TempConfig):
         self.assertAlmostEqual(step.duration, 1.5)
 
 
+class TestACommandWhoseEndMarkerNeverArrived(TempConfig):
+    def test_it_is_kept_when_another_command_follows(self):
+        # The shell never reached its prompt hook, so no end marker was
+        # written. The command still ran. It used to be overwritten by the
+        # next begin marker and vanish - output and all - which made `list`
+        # and the export disagree about how many commands the session held.
+        raw = (begin("echo one") + "one\r\n" + end(0)
+               + begin("./flaky-thing") + "partial output\r\n"
+               + begin("echo three") + "three\r\n" + end(0))
+        steps = parse_transcript(raw)
+        self.assertEqual([s.cmd for s in steps],
+                         ["echo one", "./flaky-thing", "echo three"])
+        stranded = steps[1]
+        self.assertEqual(stranded.output, "partial output")
+        self.assertIsNone(stranded.exit_code)
+        self.assertFalse(stranded.failed)
+
+    def test_the_listing_and_the_export_agree(self):
+        raw = (begin("echo one") + "one\r\n" + end(0)
+               + begin("./flaky-thing") + "partial output\r\n"
+               + begin("echo three") + "three\r\n" + end(0))
+        d = self.make_session("stranded", raw)
+        self.assertEqual(count_commands(d), len(collect_steps(d)[0]))
+
+    def test_two_stranded_commands_in_a_row_both_survive(self):
+        raw = (begin("first") + "a\r\n"
+               + begin("second") + "b\r\n"
+               + begin("third") + "c\r\n" + end(0))
+        steps = parse_transcript(raw)
+        self.assertEqual([s.cmd for s in steps], ["first", "second", "third"])
+        self.assertEqual([s.output for s in steps], ["a", "b", "c"])
+
+    def test_the_last_one_is_still_kept_at_the_end_of_the_log(self):
+        # This path always worked; it is the reason the middle one going
+        # missing was inconsistent rather than merely unfortunate.
+        steps = parse_transcript(begin("sleep 100") + "interrupted\r\n")
+        self.assertEqual([s.cmd for s in steps], ["sleep 100"])
+        self.assertEqual(steps[0].output, "interrupted")
+
+
 class TestDeduplication(unittest.TestCase):
     def test_the_same_command_run_twice_is_kept(self):
         # Two marker pairs are proof the command really ran twice; only the
