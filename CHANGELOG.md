@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **`sectape list` could promise commands the export did not contain.** On a
+  recording made without shell integration, commands are read off the screen,
+  and a prompt the reader saw twice becomes a duplicate step - so the export
+  drops consecutive steps whose command *and* output match. The listing
+  counted before any of that, and before `less`/`vim` output was replaced by
+  its one-line summary, which is itself what makes two such steps identical.
+  A session showing `6 cmds` in the listing could export one. The count now
+  runs the pipeline the export runs. Recordings *with* markers are unaffected
+  in both count and cost - a marker pair is proof the command really ran, so
+  identical repeats are still kept - and the screen-scraping path, already
+  capped at 4 MB, is about two thirds slower to count as the price of being
+  right.
+
 - `sectape cat <tab>` offered filenames instead of recordings. `cat` is an
   alias for `show`, and the completion scripts listed the primary names only,
   so the one alias that takes a recording fell through to file completion. The

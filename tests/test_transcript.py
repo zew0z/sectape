@@ -232,6 +232,46 @@ class TestCounting(TempConfig):
         d = self.make_session("c2", "user ❯ ls\r\na\r\nuser ❯ pwd\r\n/x\r\n")
         self.assertEqual(count_commands(d), 2)
 
+    def test_the_listing_agrees_with_the_export_on_unmarked_logs(self):
+        # count_commands counted before dedupe, so a listing could promise
+        # commands the document did not contain. Each of these exercises a
+        # different reason the two used to drift apart.
+        prompt = "user@host:~$ "
+        cases = {
+            "distinct": "".join(f"{prompt}grep -rn p{i} /var/log\r\nhit {i}\r\n"
+                                for i in range(8)),
+            # The same command, different output each time: genuinely run
+            # eight times, and all eight are kept.
+            "changing": "".join(f"{prompt}ls\r\nfile{i}.txt\r\n" for i in range(8)),
+            # The same command with identical output. The screen-scraping
+            # reader cannot tell these from a prompt it read twice, so they
+            # collapse - and the listing has to say so too.
+            "identical": f"{prompt}date\r\nMon 30 Aug 2026\r\n" * 6,
+            # Two `less` sessions with different screens on them. Both are
+            # rewritten to the same one-line summary before dedupe runs, which
+            # is what makes them identical in the first place.
+            "fullscreen": (f"{prompt}less notes.md\r\nSCREEN ONE\r\n"
+                           f"{prompt}less notes.md\r\nSCREEN TWO\r\n"),
+        }
+        for name, raw in cases.items():
+            with self.subTest(case=name):
+                d = self.make_session(f"agree-{name}", raw)
+                self.assertEqual(count_commands(d), len(collect_steps(d)[0]),
+                                 f"{name}: the listing and the export disagree")
+
+    def test_identical_repeats_collapse_in_both(self):
+        d = self.make_session("collapse", "user@host:~$ date\r\nMon\r\n" * 6)
+        self.assertEqual(count_commands(d), 1)
+        self.assertEqual(len(collect_steps(d)[0]), 1)
+
+    def test_a_marked_log_still_counts_every_run(self):
+        # A marker pair is proof the command really ran, so identical repeats
+        # are kept - and the count must not start collapsing those.
+        raw = (begin("date") + "Mon\r\n" + end(0)) * 4
+        d = self.make_session("marked-repeats", raw)
+        self.assertEqual(count_commands(d), 4)
+        self.assertEqual(len(collect_steps(d)[0]), 4)
+
     def test_oversized_log_reports_unknown(self):
         # Patched rather than written for real: the ceiling is tens of
         # megabytes, and the point is the comparison, not the disk.

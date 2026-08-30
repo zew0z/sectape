@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import config
 from .markers import MARKER_RE, _b64d, capture_width
 from .terminal import VTScreen
 from .text import (FULLSCREEN_CMDS, base_command, clean_terminal_output,
@@ -333,7 +334,15 @@ def count_commands(session_dir: Path) -> int | None:
         else:
             if len(raw) > MAX_REPLAY_BYTES:
                 return None
-            total += len(parse_heuristic_transcript(raw))
+            # The same pipeline the export runs, or the listing reports a
+            # number the document does not contain: the screen-scraping
+            # reader invents duplicates out of redrawn prompts, and dedupe
+            # drops them - after summarise_interactive has rewritten
+            # full-screen output, which is itself what makes two of them
+            # identical. Counting before any of that said six commands over a
+            # recording that exported one.
+            total += len(dedupe_steps(
+                parse_transcript(raw, do_redact=config.settings.redact)))
     return total
 
 
