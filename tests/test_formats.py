@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import unittest
 from pathlib import Path
 
@@ -123,6 +124,65 @@ class TestExport(TempConfig):
         export(rec(OK_STEP, label="clean"))
         names = sorted(p.name for p in config.settings.output_dir.iterdir())
         self.assertEqual(names, ["clean.md"])
+
+
+class TestEveryFormatAgreesOnTheOrder(TempConfig):
+    """A pane recorded without integration has no timestamps to sort by.
+
+    `timeline()` treated an undated step as time zero, which put every command
+    from such a pane at the front of the document - while the JSON writer,
+    which never re-sorts, kept them where they belonged. The same recording
+    came out in two different orders depending on `-f`.
+    """
+
+    def recording(self):
+        marked = [Step(cmd="marked-early", output="a", exit_code=0,
+                       started=1700000000.0, source="marker", pane="01"),
+                  Step(cmd="marked-late", output="c", exit_code=0,
+                       started=1700000100.0, source="marker", pane="01")]
+        scraped = [Step(cmd="scraped-one", output="1", source="heuristic", pane="02"),
+                   Step(cmd="scraped-two", output="2", source="heuristic", pane="02")]
+        return Recording("mixed", marked + scraped, 2, started=1700000000.0)
+
+    def orders(self, rec):
+        import json as _json
+        return {
+            "markdown": re.findall(r"^### \d+\. `([^`]+)`", to_markdown(rec), re.M),
+            "text": [l[2:] for l in to_text(rec).splitlines() if l.startswith("$ ")],
+            "html": re.findall(r'<span class="cmd mono">([^<]+)</span>', to_html(rec)),
+            "json": [s["cmd"] for s in _json.loads(to_json(rec))["steps"]],
+        }
+
+    def test_all_four_writers_agree(self):
+        rec = self.recording()
+        expected = [s.cmd for s in rec.steps]
+        for fmt, order in self.orders(rec).items():
+            self.assertEqual(order, expected, f"{fmt} put them in another order")
+
+    def test_an_undated_step_stays_after_the_command_it_followed(self):
+        rec = self.recording()
+        kinds = [(kind, getattr(item, "cmd", item)) for kind, item in rec.timeline()]
+        self.assertEqual([c for _, c in kinds],
+                         ["marked-early", "marked-late", "scraped-one", "scraped-two"])
+
+    def test_a_note_still_lands_between_the_right_commands(self):
+        rec = self.recording()
+        rec.notes = [{"at": 1700000050.0, "text": "between the two marked ones"}]
+        order = [getattr(item, "cmd", "NOTE") for _, item in rec.timeline()]
+        self.assertEqual(order, ["marked-early", "NOTE", "marked-late",
+                                 "scraped-one", "scraped-two"])
+
+    def test_a_note_after_everything_stays_last(self):
+        rec = self.recording()
+        rec.notes = [{"at": 1700000200.0, "text": "afterwards"}]
+        order = [getattr(item, "cmd", "NOTE") for _, item in rec.timeline()]
+        self.assertEqual(order[-1], "NOTE")
+
+    def test_a_recording_with_no_timestamps_keeps_its_given_order(self):
+        steps = [Step(cmd=f"step-{i}", source="heuristic") for i in range(4)]
+        rec = Recording("scraped", steps, 1)
+        self.assertEqual([getattr(i, "cmd", None) for _, i in rec.timeline()],
+                         ["step-0", "step-1", "step-2", "step-3"])
 
 
 class TestMerge(TempConfig):

@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- **The same recording came out in two different orders depending on `-f`.**
+  A pane recorded without shell integration has no markers, so its commands
+  carry no timestamps. The timeline that markdown, text and HTML are built
+  from treated an undated step as time zero and sorted it to the very front,
+  so every command from that pane appeared before everything that really came
+  first - while the JSON writer, which never re-sorts, kept them where the
+  parser had put them. An undated step now takes the time of the last step
+  that had one, which is the rule the parser already sorted them by, so all
+  four writers agree. Notes are placed against the same times, so one written
+  between two commands still lands between them.
+
 - **`sectape list` could promise commands the export did not contain.** On a
   recording made without shell integration, commands are read off the screen,
   and a prompt the reader saw twice becomes a duplicate step - so the export

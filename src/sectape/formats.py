@@ -50,14 +50,28 @@ class Recording:
         A note written between two commands belongs between them; one written
         while a long command was still running belongs just after it.
         """
-        events: list[tuple[float, int, str, object]] = []
-        for index, step in enumerate(self.steps):
-            events.append((step.started or 0.0, index, "step", step))
+        # A step read off the screen has no marker to date it. Treating that
+        # as time zero flung every command from a pane recorded without
+        # integration to the front of the document - and left the JSON export,
+        # which never re-sorts, disagreeing with the other three about the
+        # order of the same recording. An undated step takes the time of the
+        # last step that had one, so it stays among its neighbours, which is
+        # the rule the steps were already sorted by before they got here.
+        stamps: list[float] = []
+        last_seen = 0.0
+        for step in self.steps:
+            if step.started:
+                last_seen = step.started
+            stamps.append(last_seen)
+
+        events: list[tuple[float, int, str, object]] = [
+            (stamps[index], index, "step", step)
+            for index, step in enumerate(self.steps)]
         for note in self.notes:
             # Place a note after any command that was already running.
             position = len(self.steps)
-            for index, step in enumerate(self.steps):
-                if (step.started or 0.0) > note["at"]:
+            for index, at in enumerate(stamps):
+                if at > note["at"]:
                     position = index
                     break
             events.append((note["at"], position - 0.5, "note", note))
