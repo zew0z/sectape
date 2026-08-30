@@ -721,7 +721,7 @@ _sectape() {
     cmd) _describe -t commands 'sectape command' commands ;;
     args)
       case $words[1] in
-        export|show|rm) _sectape_sessions ;;
+        export|show|cat|rm) _sectape_sessions ;;
         *) _default ;;
       esac ;;
   esac
@@ -741,7 +741,7 @@ _sectape() {
     return
   fi
   case "${COMP_WORDS[1]}" in
-    export|show|rm)
+    export|show|cat|rm)
       fallback=__STATE_DIR__
       dir="${SECTAPE_STATE_DIR:-$fallback}/sessions"
       COMPREPLY=( $(compgen -W "$(ls -1 "$dir" 2>/dev/null)" -- "$cur") ) ;;

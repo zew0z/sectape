@@ -626,6 +626,34 @@ class TestCompletionScripts(unittest.TestCase):
         self.assertEqual(offered, {"cert_renewal", "box_htb"},
                          result.stdout + result.stderr)
 
+    def test_every_alias_that_takes_a_recording_completes_one(self):
+        # `cat` is `show` and `ls` is `list`; the aliases are real commands.
+        # One that takes a recording but is missing from the case arm falls
+        # through to filename completion, which is never what you want after
+        # typing `sectape cat `.
+        import argparse
+        wanted = set()
+        for action in build_parser()._actions:
+            if not isinstance(action, argparse._SubParsersAction):
+                continue
+            by_parser = {}
+            for name, sub in action.choices.items():
+                by_parser.setdefault(id(sub), []).append(name)
+            for names in by_parser.values():
+                if names[0] in ("export", "show", "rm"):
+                    wanted.update(names)
+
+        arms = {
+            "zsh": re.search(r"([\w|]+)\)\s*_sectape_sessions", self.script("zsh")),
+            "bash": re.search(r"([\w|]+)\)\s*\n\s*fallback=", self.script("bash")),
+        }
+        for shell, match in arms.items():
+            self.assertIsNotNone(match, f"no session-completing arm found in {shell}")
+            offered = set(match.group(1).split("|"))
+            self.assertEqual(offered, wanted,
+                             f"{shell} completes recordings for {sorted(offered)}, "
+                             f"but the commands that take one are {sorted(wanted)}")
+
     def test_every_command_is_offered_by_both_scripts(self):
         # Otherwise a command added here quietly stops being completable.
         zsh, bash = self.script("zsh"), self.script("bash")

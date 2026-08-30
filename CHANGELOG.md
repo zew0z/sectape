@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- `sectape cat <tab>` offered filenames instead of recordings. `cat` is an
+  alias for `show`, and the completion scripts listed the primary names only,
+  so the one alias that takes a recording fell through to file completion. The
+  test now derives that list from the parser's own aliases, so a new one
+  cannot quietly miss out.
+- The README said `export` and `show` both take `-o PATH`. Only `export` does;
+  `show` writes to stdout.
+
 - **`config init --force` could overwrite a file you had not named.** The
   `config` subcommands worked out the path from the environment and the
   default alone, so `--config` was ignored by two of the three: `sectape

@@ -72,8 +72,9 @@ sectape completion zsh     emit a completion script
 sectape doctor             check the install
 ```
 
-`export` and `show` take `-f markdown|json|text|html`, `-o PATH`, and filters:
-`--only-failed`, `--last N`, `--grep RE`, `--no-output`.
+`export` and `show` both take `-f markdown|json|text|html` and the filters
+`--only-failed`, `--last N`, `--grep RE`, `--no-output`. `-o PATH` belongs to
+`export` alone; `show` writes to stdout, so redirect it.
 
 A filtered `export` is a subset, so it gets its own file — `lab (failed).md`,
 `lab (last 20).md` — rather than overwriting the recording's complete
@@ -226,7 +227,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-703 tests, no dependencies. The end-to-end ones drive the real CLI through a
+704 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS
