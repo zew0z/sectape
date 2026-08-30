@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sys
+import termios
 import time
 from pathlib import Path
 
@@ -186,16 +187,17 @@ def cmd_rec(args) -> int:
     lines.append("")
     banner = "\n".join(lines)
 
+    # `finally`, not `except`: releasing the pane is what writes the export,
+    # and it is owed however the recording ended. Catching a list of exception
+    # types here is what let this break twice - the terminal going away raises
+    # EIO from wherever the recorder happens to be, and `termios.error`, which
+    # is what a doomed tcsetattr raises, is not an OSError at all. Nothing is
+    # swallowed: an exception still propagates once the export is safe.
     try:
         record_pty(pane_log, banner, no_integration=no_integration)
-    except OSError:
-        # The terminal went away mid-recording: the window was closed, an ssh
-        # connection dropped. Writing to it then raises EIO from wherever the
-        # recorder happened to be, and that used to escape to main() - so the
-        # export below never ran and the pane log sat on disk unexported.
-        # However the recording ended, releasing the pane is still owed.
-        pass
-    return _release_pane(pane_id, "stopped", recorded)
+    finally:
+        released = _release_pane(pane_id, "stopped", recorded)
+    return released
 
 
 def cmd_attach(args) -> int:
@@ -228,9 +230,9 @@ def cmd_attach(args) -> int:
         record_pty(pane_log, banner,
                    no_integration=(args.no_integration
                                    or not config.settings.shell_integration))
-    except OSError:
-        pass                                   # as in cmd_rec, above
-    return _release_pane(pane_id, "detached", session)
+    finally:                                   # as in cmd_rec, above
+        released = _release_pane(pane_id, "detached", session)
+    return released
 
 
 def _finish(session: dict, quiet: bool, fmt: str | None = None) -> Path | None:
@@ -969,9 +971,12 @@ def main(argv=None) -> int:
         except OSError:
             pass
         return 128 + 13                 # what a SIGPIPE death would report
-    except OSError as exc:
+    except (OSError, termios.error) as exc:
         # A full disk, a read-only output directory, a path that is really a
         # directory: ordinary conditions that used to end in a traceback.
+        # termios.error is named separately because it descends straight from
+        # Exception - a terminal that has gone away raises it, and it was
+        # reaching the user as a traceback for exactly that reason.
         detail = getattr(exc, "strerror", None) or str(exc)
         where = getattr(exc, "filename", None)
         print(f"error: {detail}" + (f": {where}" if where else ""),

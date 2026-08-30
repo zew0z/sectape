@@ -4,6 +4,7 @@ import pathlib
 import re
 import shutil
 import tempfile
+import termios
 import time
 import subprocess
 import sys
@@ -439,7 +440,7 @@ class TestTheExportSurvivesTheRecorderFailing(TempConfig):
     pane log sat on disk with nothing written to the output directory.
     """
 
-    def _run_rec(self):
+    def _run_rec(self, failure):
         from sectape import cli
 
         def fake_record_pty(log_path, banner, no_integration=False):
@@ -447,7 +448,7 @@ class TestTheExportSurvivesTheRecorderFailing(TempConfig):
             log_path.write_text(
                 begin("echo recovered") + "recovered\r\n" + end(0),
                 encoding="utf-8")
-            raise OSError(5, "Input/output error")
+            raise failure
 
         saved = cli.record_pty
         cli.record_pty = fake_record_pty
@@ -456,17 +457,33 @@ class TestTheExportSurvivesTheRecorderFailing(TempConfig):
         class Args:
             label = ["salvage"]
             no_integration = False
-        return cli.cmd_rec(Args())
+        with self.assertRaises(type(failure)):
+            cli.cmd_rec(Args())
 
-    def test_a_recorder_that_dies_on_the_terminal_still_exports(self):
-        self._run_rec()
-        exports = sorted(config.settings.output_dir.glob("*.md"))
-        self.assertTrue(exports, "nothing was exported")
-        self.assertIn("echo recovered", exports[0].read_text())
+    # A terminal that has gone away raises EIO from wherever the recorder
+    # happens to be - and a doomed tcsetattr raises termios.error, which
+    # descends from Exception and is not an OSError. Catching a list of types
+    # is what let this break twice, so the guarantee is tested against both,
+    # and against something neither of them.
+    FAILURES = [OSError(5, "Input/output error"),
+                termios.error(5, "Input/output error"),
+                RuntimeError("something nobody predicted")]
+
+    def test_the_export_happens_however_the_recorder_died(self):
+        for failure in self.FAILURES:
+            with self.subTest(failure=type(failure).__name__):
+                self.setUp()
+                self._run_rec(failure)
+                exports = sorted(config.settings.output_dir.glob("*.md"))
+                self.assertTrue(exports, "nothing was exported")
+                self.assertIn("echo recovered", exports[0].read_text())
 
     def test_and_the_session_is_not_left_registered_as_live(self):
-        self._run_rec()
-        self.assertFalse(config.settings.current_session_file.exists())
+        for failure in self.FAILURES:
+            with self.subTest(failure=type(failure).__name__):
+                self.setUp()
+                self._run_rec(failure)
+                self.assertFalse(config.settings.current_session_file.exists())
 
 
 class TestCompletionScripts(unittest.TestCase):

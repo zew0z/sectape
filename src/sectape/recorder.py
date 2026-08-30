@@ -296,10 +296,13 @@ def record_pty(log_path: Path, banner: str, no_integration: bool = False) -> int
                 break
         try:
             # TCSADRAIN waits for output to drain, which a terminal that has
-            # gone away will never do. Failing to restore one that no longer
-            # exists is not worth an exception.
+            # gone away will never do: on Linux this raises EIO. Failing to
+            # restore a terminal that no longer exists is not worth an
+            # exception. termios.error is caught by name because it descends
+            # straight from Exception - it is not an OSError, so `except
+            # OSError` here silently did nothing at all.
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attrs)
-        except OSError:
+        except (termios.error, OSError):
             pass
         try:
             sys.stdout.write(TERMINAL_RESET)

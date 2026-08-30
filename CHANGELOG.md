@@ -51,11 +51,21 @@
   pane log survived on disk, but nothing reached the output directory and
   `current.json` still claimed the session was live.
 
+  On Linux the raising call is `tcsetattr`, restoring the terminal on the way
+  out: `TCSADRAIN` waits for a drain that a vanished terminal will never do.
+  It raises `termios.error`, which descends straight from `Exception` and is
+  not an `OSError`, so every `except OSError` in the path - including the
+  one in `main` meant to turn conditions like this into a readable message -
+  let it through as a traceback.
+
   Releasing the pane, which is what writes the export, is now owed however the
-  recording ends rather than only when it ends tidily. Alongside that: the
-  teardown drops a report it cannot deliver, the recorder stops mirroring but
-  keeps logging the shell's dying output instead of abandoning it, and failing
-  to restore a terminal that no longer exists is no longer an error.
+  recording ends: `finally`, not a list of exception types to get wrong.
+  Nothing is swallowed - an exception still propagates once the export is
+  safe. Alongside that: the teardown drops a report it cannot deliver, the
+  recorder keeps logging the shell's dying output after mirroring fails
+  instead of abandoning it, failing to restore a terminal that no longer
+  exists is no longer an error, and `termios.error` reaches the same handler
+  as its `OSError` siblings.
 
 - **A command whose end marker never arrived was dropped from the export.**
   When the shell does not reach its prompt hook, no `e|` marker is written.
