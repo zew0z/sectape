@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **A re-export deleted anything you had added to the YAML frontmatter.** The
+  markdown writer preserves the prose you write around the generated block,
+  which is the whole point of the block - but it replaced the frontmatter
+  wholesale, so a `tags:` list or a `status:` line added in a notes app was
+  gone after the next export, without a word. Only the keys sectape wrote
+  there - `type`, `label`, `date`, `commands`, `failed` - are refreshed now,
+  in place; everything else is carried through, block-style lists included.
+
 - **`resolve_session_dir` did not keep the promise in its own docstring.** The
   direct lookup refuses anything that is not a direct child of the sessions
   directory, but the name-matching fallback beneath it returned the entry as

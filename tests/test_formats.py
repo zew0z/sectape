@@ -226,6 +226,50 @@ class TestReExportRefreshesTheSummary(TempConfig):
         path = export(rec(*self.steps(4), started=1700000000.0))
         self.assertIn("commands: 4", path.read_text())
 
+    def test_frontmatter_a_reader_added_survives_the_refresh(self):
+        # Adding `tags:` in a notes app is the first thing anyone does to a
+        # file like this. The whole frontmatter block used to be replaced, so
+        # those keys were gone after the next export - silently, while the
+        # prose below the block was being carefully preserved.
+        new = to_markdown(rec(*self.steps(2), started=1700000000.0))
+        path = self.root / "tagged.md"
+        path.write_text(
+            "---\ntags:\n  - ctf\n  - recon\nstatus: in-progress\n"
+            "type: terminal-capture\ncommands: 1\n---\n\n# demo\n\n"
+            f"{GEN_BEGIN}\nold\n{GEN_END}\n",
+            encoding="utf-8")
+        merged = merge(new, path)
+        self.assertIn("tags:", merged)
+        self.assertIn("  - ctf", merged)
+        self.assertIn("  - recon", merged)
+        self.assertIn("status: in-progress", merged)
+        # ...and the keys sectape owns are still brought up to date.
+        self.assertIn("commands: 2", merged)
+        self.assertNotIn("commands: 1", merged)
+
+    def test_our_own_keys_are_not_duplicated_by_the_merge(self):
+        new = to_markdown(rec(*self.steps(2), started=1700000000.0))
+        path = self.root / "dup.md"
+        path.write_text(
+            "---\ntype: terminal-capture\nlabel: \"demo\"\ncommands: 1\n"
+            f"failed: 0\n---\n\n{GEN_BEGIN}\nold\n{GEN_END}\n",
+            encoding="utf-8")
+        front = merge(new, path).split("---")[1]
+        for key in ("type:", "label:", "commands:", "failed:", "date:"):
+            self.assertEqual(front.count(key), 1, f"{key} appears twice")
+
+    def test_a_missing_key_is_added_rather_than_dropped(self):
+        # A document written by an older version has no `date:` line. The
+        # refresh has to introduce one rather than quietly leave it out.
+        new = to_markdown(rec(*self.steps(2), started=1700000000.0))
+        path = self.root / "older.md"
+        path.write_text(
+            "---\ntype: terminal-capture\ncommands: 1\n---\n\n"
+            f"{GEN_BEGIN}\nold\n{GEN_END}\n", encoding="utf-8")
+        front = merge(new, path).split("---")[1]
+        self.assertIn("date:", front)
+        self.assertIn("label:", front)
+
     def test_prose_around_the_block_is_still_preserved(self):
         new = to_markdown(rec(*self.steps(2), started=1700000000.0))
         path = self.root / "note.md"

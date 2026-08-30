@@ -160,7 +160,7 @@ Four formats, selected with `-f` or `output.format` in the config:
 
 | Format | What it's for |
 |---|---|
-| `markdown` | A readable document. Never overwrites a file it did not write: if something else is already at that name, the export lands beside it. The summary and transcript between `<!-- sectape:begin -->` and `<!-- sectape:end -->` are regenerated, and the YAML frontmatter is refreshed; prose you write around the block is preserved. |
+| `markdown` | A readable document. Never overwrites a file it did not write: if something else is already at that name, the export lands beside it. The summary and transcript between `<!-- sectape:begin -->` and `<!-- sectape:end -->` are regenerated; prose you write around the block is preserved, and so is anything you add to the YAML frontmatter - only the keys sectape wrote there (`type`, `label`, `date`, `commands`, `failed`) are refreshed, so `tags:` and the rest survive. |
 | `json` | Structured steps — command, output, exit code, cwd, duration — for feeding somewhere else. |
 | `text` | Plain prompt-and-output, good for piping. |
 | `html` | A self-contained page — no external assets, readable in light or dark, fine to hand to someone. |
@@ -226,7 +226,7 @@ care as your shell history — more, since they include command *output*.
 python -m unittest discover -s tests -t . -v
 ```
 
-690 tests, no dependencies. The end-to-end ones drive the real CLI through a
+693 tests, no dependencies. The end-to-end ones drive the real CLI through a
 pseudo-terminal and assert that the recorded shell sees the right `$COLUMNS`,
 follows a resize, restores the terminal on `SIGTERM`, and produces exports with
 exact commands and exit codes, under both zsh and bash. CI runs them on macOS

@@ -655,12 +655,52 @@ STALE_FACT_RE = re.compile(
     r"|^- \*\*(?:Shell|Programs)\*\*: `.+$")
 
 
+# The frontmatter keys sectape writes, and so the only ones it may rewrite.
+OWN_FRONT_KEYS = ("type", "label", "date", "commands", "failed")
+
+
+def _front_body(block: str) -> list[str]:
+    """The lines between a frontmatter block's `---` delimiters."""
+    return block.strip().split("\n")[1:-1]
+
+
+def _merge_frontmatter(old_block: str, new_block: str) -> str:
+    """Refresh the keys sectape owns and keep every key the reader added.
+
+    The whole block used to be replaced, so a `tags:` line added in a notes
+    app - the first thing anyone does to a file like this - was gone after the
+    next export, silently, while the prose below the generated block was being
+    carefully preserved.
+    """
+    fresh = {}
+    for line in _front_body(new_block):
+        key = line.split(":", 1)[0].strip()
+        if key in OWN_FRONT_KEYS:
+            fresh[key] = line
+
+    kept, written = [], set()
+    for line in _front_body(old_block):
+        key = line.split(":", 1)[0].strip()
+        # Only a line that is itself one of our keys is ours to touch. A
+        # continuation line - the `  - ctf` under a `tags:` - has no key at
+        # this level and is carried through untouched.
+        if key in fresh and key not in written:
+            kept.append(fresh[key])
+            written.add(key)
+        else:
+            kept.append(line)
+    kept += [fresh[key] for key in OWN_FRONT_KEYS
+             if key in fresh and key not in written]
+    return "---\n" + "\n".join(kept) + "\n---\n"
+
+
 def _refresh_head(head: str, new_text: str) -> str:
     """Bring the part before the block up to date without losing prose."""
     old_front = FRONTMATTER_RE.match(head)
     new_front = FRONTMATTER_RE.match(new_text)
     if old_front and new_front:
-        head = new_front.group(0) + head[old_front.end():]
+        head = (_merge_frontmatter(old_front.group(0), new_front.group(0))
+                + head[old_front.end():])
     lines = head.split("\n")
 
     def drop_blanks():
