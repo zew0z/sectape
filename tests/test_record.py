@@ -872,14 +872,56 @@ class TestRecording(unittest.TestCase):
                          f"the redraw was captured as output: {body}")
         self.assertTrue(body[0].startswith("$ "), body[0])
 
+    def spawn_with_stderr(self, errlog: Path, *argv):
+        """Like `spawn`, but the recorder's stderr goes to a file.
+
+        Its stderr is normally the pty being taken away, so anything it says
+        on the way down is lost with it - which is exactly what you need to
+        read when this fails.
+        """
+        import pty
+        pid, master = pty.fork()
+        if pid == 0:
+            try:
+                fd = os.open(str(errlog), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                os.dup2(fd, 2)
+                os.execve(sys.executable,
+                          [sys.executable, "-m", "sectape", *argv], self.env)
+            except Exception:
+                pass
+            os._exit(127)
+        set_winsize(master, self.ROWS, self.COLS)
+        return pid, master
+
+    def hangup_diagnosis(self, errlog: Path) -> str:
+        """Everything worth knowing about a hangup that produced no export."""
+        state = self.root / "state"
+        lines = ["nothing was exported.",
+                 "exports dir: " + (str(sorted(p.name for p in self.exports.iterdir()))
+                                    if self.exports.exists() else "(missing)")]
+        for path in sorted(state.rglob("*")) if state.exists() else []:
+            lines.append(f"  state/{path.relative_to(state)}"
+                         + (f"  {path.stat().st_size}b" if path.is_file() else "/"))
+        raws = sorted(state.rglob("*.raw")) if state.exists() else []
+        for raw in raws:
+            body = raw.read_text(errors="replace")
+            lines.append(f"  {raw.name}: {len(body)}b, "
+                         f"has the command output: {ALPHA_OUT in body}")
+        try:
+            lines.append("recorder stderr: " + (errlog.read_text() or "(empty)"))
+        except OSError:
+            lines.append("recorder stderr: (no file)")
+        return "\n".join(lines)
+
     def test_a_terminal_that_goes_away_still_gets_its_export(self):
         # Closing the window, or an ssh connection dropping, takes the pty the
-        # recorder was mirroring to with it. The teardown then prints its
-        # summary to a terminal that is gone, which raises EIO - and that used
-        # to escape from the middle of the teardown, before the export ran.
-        # The pane log survived on disk, but nothing was written to the output
-        # directory and `current.json` still claimed the session was live.
-        pid, master = self.spawn("rec", "hangup")
+        # recorder was mirroring to with it. Writing to it afterwards raises
+        # EIO from wherever the recorder happens to be, and that used to reach
+        # main() and return before the export ran. The pane log survived on
+        # disk, but nothing was written to the output directory and
+        # `current.json` still claimed the session was live.
+        errlog = self.root / "recorder-stderr.txt"
+        pid, master = self.spawn_with_stderr(errlog, "rec", "hangup")
         read_until(master, "REC", 25)
         time.sleep(1.2)
         self.assertTrue(run_until_seen(master, ALPHA_CMD, ALPHA_OUT),
@@ -889,10 +931,7 @@ class TestRecording(unittest.TestCase):
         self.assertTrue(self.reap(pid, 25), "recorder did not stop")
 
         note = self.exports / "hangup.md"
-        self.assertTrue(note.exists(),
-                        "nothing was exported: "
-                        + str(sorted(p.name for p in self.exports.iterdir())
-                              if self.exports.exists() else []))
+        self.assertTrue(note.exists(), self.hangup_diagnosis(errlog))
         text = note.read_text()
         self.assertIn(ALPHA_OUT, text)
         self.assertFalse((self.root / "state" / "current.json").exists(),
