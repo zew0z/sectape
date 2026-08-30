@@ -667,7 +667,13 @@ def cmd_rm(args) -> int:
 # --------------------------------------------------------------------------
 
 def cmd_config(args) -> int:
-    path = config.config_path()
+    # The file this run is actually using. `config_path()` answers from the
+    # environment and the default alone, so `--config` was ignored right here:
+    # `config path` named a different file than `config show` reported in the
+    # same breath, and `config init --force` wrote the template over a config
+    # the command line had never mentioned, leaving the named one untouched.
+    path = (Path(args.config).expanduser() if getattr(args, "config", None)
+            else config.config_path())
     if args.action == "path":
         print(path)
         return 0
@@ -930,7 +936,12 @@ def main(argv=None) -> int:
         # A missing *default* config is normal; a missing one you named on the
         # command line is a typo, and silently falling back to the defaults
         # hid it.
-        if chosen is not None and not chosen.exists():
+        # `config init` is the command whose whole purpose is creating that
+        # file, so it is the one place a path that does not exist yet is not
+        # a typo.
+        making_it = (getattr(args, "func", None) is cmd_config
+                     and getattr(args, "action", None) == "init")
+        if chosen is not None and not chosen.exists() and not making_it:
             raise ConfigError(f"{chosen}: no such configuration file")
         config.load(chosen)
         overrides = {}

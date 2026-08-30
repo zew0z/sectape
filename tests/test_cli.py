@@ -431,6 +431,60 @@ def parser_commands() -> list[str]:
     return []
 
 
+class TestConfigCommandsHonourTheConfigFlag(TempConfig):
+    """`--config` names the file this run uses. All three actions must agree."""
+
+    def setUp(self):
+        super().setUp()
+        self.named = self.root / "named.toml"
+        self.named.write_text('[general]\nprompt = "named"\n', encoding="utf-8")
+        # What SECTAPE_CONFIG points at, which --config must take precedence
+        # over rather than quietly act on.
+        self.other = self.root / "from-env.toml"
+        self.other.write_text('[general]\nprompt = "env"\n', encoding="utf-8")
+        self.env = {"SECTAPE_STATE_DIR": str(self.root / "state"),
+                    "SECTAPE_OUTPUT_DIR": str(self.root / "out"),
+                    "SECTAPE_CONFIG": str(self.other)}
+
+    def test_config_path_names_the_file_the_run_is_using(self):
+        r = run("--config", str(self.named), "config", "path", env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), str(self.named))
+
+    def test_config_path_and_config_show_agree(self):
+        path = run("--config", str(self.named), "config", "path", env=self.env)
+        show = run("--config", str(self.named), "config", "show", env=self.env)
+        shown = [line.split(None, 1)[1].strip() for line in show.stdout.splitlines()
+                 if line.startswith("config_path")]
+        self.assertEqual([path.stdout.strip()], shown)
+
+    def test_init_force_writes_the_named_file_and_no_other(self):
+        # It used to write the template over whatever config the environment
+        # pointed at - a file the command line had never mentioned - and leave
+        # the named one alone.
+        untouched = self.other.read_text()
+        r = run("--config", str(self.named), "config", "init", "--force",
+                env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("sectape configuration", self.named.read_text())
+        self.assertEqual(self.other.read_text(), untouched,
+                         "init overwrote a file that was not named")
+
+    def test_init_can_create_the_path_it_was_given(self):
+        # A --config that does not exist is a typo for every other command;
+        # for `init` it is the point.
+        fresh = self.root / "nested" / "fresh.toml"
+        r = run("--config", str(fresh), "config", "init", env=self.env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("sectape configuration", fresh.read_text())
+
+    def test_a_missing_config_is_still_a_typo_for_other_commands(self):
+        r = run("--config", str(self.root / "nope.toml"), "config", "show",
+                env=self.env)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no such configuration file", r.stderr)
+
+
 class TestTheExportSurvivesTheRecorderFailing(TempConfig):
     """However the recording ends, the pane log is still worth exporting.
 

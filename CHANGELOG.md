@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- **`config init --force` could overwrite a file you had not named.** The
+  `config` subcommands worked out the path from the environment and the
+  default alone, so `--config` was ignored by two of the three: `sectape
+  --config mine.toml config path` printed a different file than `config show`
+  reported for the same run, and `config init --force` wrote the template over
+  whatever `SECTAPE_CONFIG` pointed at while leaving `mine.toml` untouched.
+  All three now use the file the run is actually using.
+
+### Changed
+
+- `sectape --config new.toml config init` creates that file instead of
+  refusing it. A `--config` that does not exist is a typo for every other
+  command and is still an error there; for `init`, which exists to create it,
+  it was the one thing you could not do.
+
 - **Tab-completion looked in the wrong place for anyone using a config
   file.** Both completion scripts had `$HOME/.sectape` written into them as a
   literal, so setting `state_dir` in a config file - which is exactly what
